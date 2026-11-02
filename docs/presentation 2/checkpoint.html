@@ -1,0 +1,575 @@
+<meta charset="utf-8">
+<title>Pepper Sim2Real — Progress Checkpoint 2</title>
+
+<style>
+  /* Minimal reset. This deck is opened straight from disk, with no framework or normalise
+     stylesheet behind it, so UA default margins on h2/h3/p would otherwise drive the spacing. */
+  *, *::before, *::after { box-sizing: border-box; }
+  body, h1, h2, h3, p { margin: 0; padding: 0; }
+
+  /* The palette, type ramp and shell are carried over unchanged from presentation 1 — the two
+     decks are one series and should read as one. Single fixed palette, deliberately not
+     theme-reactive: a deck must look the same whatever the presenting machine's OS theme is set
+     to. The neutrals carry a slight blue cast so they sit in one family with the accent.
+     The type ramp is roughly 45% larger than a screen-read deck because this is projected in a
+     room; the stage is a fixed 1280x720 and overflow is clipped, so the larger type is paid for
+     out of padding and gaps. */
+  :root {
+    --font-sans: "Trebuchet MS", "Lucida Grande", "Lucida Sans Unicode",
+                 "Lucida Sans", Tahoma, sans-serif;
+    --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas,
+                 "Liberation Mono", Menlo, monospace;
+
+    --bg:        #DCE3EB;   /* viewport behind the stage, a shade under the slide itself */
+    --surface:   #F5F8FB;   /* the main colour — the slide face, tinted slightly blue */
+    --surface-2: #E9EFF6;   /* cool tint, now only inline code */
+    --card:      #FFFFFF;   /* every card face: callout, pipeline nodes, steps, video frame */
+    --ink:       #101820;
+    --ink-2:     #48545F;
+    --ink-3:     #64707C;
+    --line:      #CDD7E1;
+    --line-2:    #DFE6ED;
+
+    /* One accent, in two strengths. #47AAF0 is a mid-light blue: it reads well as a solid
+       fill, but as text on this paper it is only ~2.4:1, so anything typographic uses the
+       darkened -ink variant (~4.7:1) instead. */
+    --sim:       #47AAF0;
+    --sim-ink:   #1B72B8;
+    --sim-soft:  #E4F1FC;
+    --real:      #47AAF0;
+    --real-ink:  #1B72B8;
+
+    --shadow: 0 1px 2px rgba(16,24,32,.07), 0 10px 28px rgba(16,24,32,.06);
+  }
+
+  /* ───────────────────────────── shell ───────────────────────────── */
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    overflow: hidden;
+  }
+
+  .pd-viewport { position: fixed; inset: 0; display: grid; place-items: center; overflow: hidden; }
+
+  .pd-stage {
+    width: 1280px;
+    height: 720px;
+    position: relative;
+    transform-origin: center center;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+
+  .pd-slide {
+    position: absolute;
+    inset: 0;
+    padding: 30px 48px 58px;
+    display: none;
+    flex-direction: column;
+  }
+  .pd-slide.is-active { display: flex; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .pd-slide.is-active { animation: pd-in .22s ease-out both; }
+    @keyframes pd-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  }
+
+  /* ───────────────────────────── rail ───────────────────────────── */
+  .pd-rail {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 42px;
+    padding: 0 48px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    border-top: 1px solid var(--line-2);
+    background: var(--surface);
+    font-family: var(--font-mono);
+    font-size: 15px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .pd-rail-spacer { flex: 1; }
+  .pd-rail-count { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+
+  .pd-progress { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--sim); transition: width .22s ease-out; }
+
+  /* ───────────────────────────── type ───────────────────────────── */
+  .pd-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 16px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--sim-ink);
+    display: flex;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .pd-eyebrow.is-real { color: var(--real-ink); }
+
+  h2.pd-h2 {
+    font-size: 54px;
+    line-height: 1.06;
+    letter-spacing: -.022em;
+    font-weight: 700;
+    text-wrap: balance;
+    margin-bottom: 8px;
+  }
+  .pd-body  { font-size: 22px; line-height: 1.45; color: var(--ink-2); }
+  .pd-small { font-size: 19px; line-height: 1.42; color: var(--ink-3); }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: .92em;
+    color: var(--ink);
+    background: var(--surface-2);
+    border: 1px solid var(--line-2);
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+
+  .pd-content { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; }
+  /* Slides whose content is shorter than the stage read better optically centred. */
+  .pd-content.is-centered { justify-content: center; }
+
+  /* ───────────────────────────── pipeline ───────────────────────────── */
+  /* The pipeline follows the research question on slide 1; the margin is what separates the
+     two, on top of the .pd-content gap. */
+  .pd-pipe { display: flex; align-items: stretch; gap: 0; margin-top: 28px; }
+  .pd-pipe-node {
+    flex: 1;
+    padding: 14px 9px;
+    border: 1px solid var(--line);
+    border-right: none;
+    background: var(--card);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: relative;
+  }
+  .pd-pipe-node:last-child { border-right: 1px solid var(--line); }
+  .pd-pipe-node .n { font-family: var(--font-mono); font-size: 14px; letter-spacing: .12em; color: var(--ink-3); }
+  .pd-pipe-node .t { font-size: 19px; font-weight: 650; line-height: 1.18; letter-spacing: -.015em; color: var(--ink); }
+  .pd-pipe-node::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; }
+  /* k-real nodes keep the white card face; only k-sim carries a tint, so the pipeline still
+     shows which stages happen in simulation. */
+  .pd-pipe-node.k-real::after { background: var(--real); }
+  .pd-pipe-node.k-real .t { color: var(--real-ink); }
+  .pd-pipe-node.k-sim  { background: var(--sim-soft); }
+  .pd-pipe-node.k-sim::after { background: var(--sim); }
+  .pd-pipe-node.k-sim .t { color: var(--sim-ink); }
+
+  /* The stage this talk reports on, so the pipeline doubles as an agenda. The node keeps its own
+     fill — the sim/real reading has to survive — and is marked instead by a ring and a heavier
+     top bar. The ring is drawn inset because the nodes share borders, and an outset one would
+     shift its neighbours. */
+  .pd-pipe-node.is-here { box-shadow: inset 0 0 0 2px var(--sim); z-index: 1; }
+  .pd-pipe-node.is-here::after { height: 6px; }
+  .pd-pipe-node .here {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--sim-ink);
+  }
+
+  .pd-pipe-bands { display: flex; margin-top: 8px; gap: 4px; }
+  .pd-band {
+    padding: 7px 10px;
+    border: 1px solid var(--line-2);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    text-align: center;
+  }
+  /* The bands mirror the nodes above them: white for the real world, tinted for simulation.
+     The border is what makes the white ones read as a strip at all — against the page they
+     are only a couple of percent apart. */
+  .pd-band.k-real { background: var(--card);     color: var(--real-ink); }
+  .pd-band.k-sim  { background: var(--sim-soft); color: var(--sim-ink); }
+
+  .pd-callout { margin-top: 12px; padding: 15px 18px; border-left: 4px solid var(--sim); background: var(--card); }
+  /* On slide 1 the callout leads the content rather than closing it, so it carries no top margin. */
+  .pd-callout:first-child { margin-top: 0; }
+  .pd-callout.is-real { border-left-color: var(--real); }
+  .pd-callout .q { font-size: 27px; line-height: 1.32; color: var(--ink); font-weight: 600; letter-spacing: -.016em; }
+
+  /* ───────────────────────────── video ───────────────────────────── */
+  /* The caption sits underneath the video, so a missing or unplayable file degrades to a
+     readable description of what should be on screen rather than an empty box. */
+  .pd-video {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    background: var(--card);
+    border: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .pd-video .miss { font-family: var(--font-mono); font-size: 17px; line-height: 1.6; color: var(--ink-3); text-align: center; }
+  /* Transparent until a frame actually decodes, so a missing or unplayable clip falls back to
+     the caption underneath instead of an empty box. `is-ready` is set on first decoded frame. */
+  .pd-video video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: transparent;
+  }
+  .pd-video.is-ready video { background: var(--card); }
+  .pd-video.is-ready .miss { display: none; }
+  .pd-video-tag {
+    position: absolute;
+    left: 0; bottom: 0;
+    z-index: 2;
+    padding: 6px 12px;
+    background: var(--sim);
+    color: var(--ink);   /* dark-on-accent; the accent is far too light to carry white text */
+    font-family: var(--font-mono);
+    font-size: 14px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+  }
+
+  /* Two clips side by side for the before/after comparison. Each frame is pinned to the clips'
+     own 1124x652 shape rather than stretched to fill the row: both recordings are the same
+     shape, so matching the frame to them removes the letterboxing `contain` would otherwise
+     leave, and keeps the pair the same height as each other. */
+  .pd-video-pair { display: flex; gap: 14px; align-items: flex-start; }
+  .pd-video-pair .pd-video { flex: 1; aspect-ratio: 1124 / 652; }
+
+  /* A single portrait clip beside its explanation. The simulator recording is 580x796 --
+     the shape of the Gazebo window it was captured from, not a choice -- and a portrait
+     video stretched across a 16:9 slide would be a narrow strip in a field of empty
+     frame. Pairing it with text instead fills the slide and reads as deliberate.
+
+     The frame takes its height from the row and derives its width from the clip's own
+     aspect ratio, so replacing the recording with a differently shaped one needs only
+     the ratio changed here. */
+  .pd-sim-row { display: flex; flex: 1; min-height: 0; gap: 28px; align-items: stretch; }
+  .pd-sim-row .pd-video { flex: 0 0 auto; aspect-ratio: 580 / 796; }
+  .pd-sim-row .pd-sim-text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 14px;
+  }
+
+  /* ───────────────────────────── steps ───────────────────────────── */
+  .pd-steps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+  .pd-steps.is-3 { grid-template-columns: repeat(3, 1fr); }
+  .pd-steps.is-4 { grid-template-columns: repeat(4, 1fr); }
+  .pd-step {
+    padding: 11px 11px 13px;
+    background: var(--card);
+    border: 1px solid var(--line-2);
+    border-top: 4px solid var(--real);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .pd-step .n { font-family: var(--font-mono); font-size: 14px; letter-spacing: .13em; color: var(--real-ink); }
+  .pd-step h3 { font-size: 20px; font-weight: 650; letter-spacing: -.014em; line-height: 1.2; color: var(--ink); }
+  .pd-step p  { font-size: 17px; line-height: 1.34; color: var(--ink-2); }
+
+  /* ───────────────────────────── help ───────────────────────────── */
+  .pd-help {
+    position: absolute;
+    inset: 0;
+    background: rgba(10,16,24,.72);
+    display: none;
+    place-items: center;
+    z-index: 10;
+  }
+  .pd-help.is-shown { display: grid; }
+  .pd-help-inner { background: var(--surface); border: 1px solid var(--line); padding: 28px 36px; min-width: 420px; }
+  .pd-help-inner h3 { font-size: 21px; font-weight: 650; margin-bottom: 14px; }
+  .pd-help-row { display: flex; gap: 28px; justify-content: space-between; font-size: 18px; color: var(--ink-2); padding: 5px 0; }
+  .pd-help-row span:first-child { font-family: var(--font-mono); color: var(--ink); }
+</style>
+
+<div class="pd-viewport">
+  <div class="pd-stage" id="pd-stage" tabindex="0">
+
+    <!-- ══════════════ 1 · THE RESEARCH ══════════════ -->
+    <!-- Deliberately near-identical to presentation 1's opening slide: the audience should
+         recognise where they left off. The only change is the marker on stage 01. -->
+    <section class="pd-slide is-active">
+      <h2 class="pd-h2">Closing the sim-to-real gap for Pepper</h2>
+      <div class="pd-content is-centered">
+        <div class="pd-callout">
+          <div class="q">Does training Pepper in a photogrammetry-based simulation with dynamics
+          randomisation and SAC improve real-world performance and reduce the sim-to-real gap,
+          compared to a standard non-photogrammetric simulation?</div>
+        </div>
+        <div class="pd-pipe">
+          <div class="pd-pipe-node k-sim"><span class="n">00</span><span class="t">Setup env</span></div>
+          <div class="pd-pipe-node k-real is-here"><span class="n">01</span><span class="t">Photogrammetry</span><span class="here">This talk</span></div>
+          <div class="pd-pipe-node k-sim"><span class="n">02</span><span class="t">Hand made model</span></div>
+          <div class="pd-pipe-node k-sim"><span class="n">03</span><span class="t">SAC policy</span></div>
+          <div class="pd-pipe-node k-real"><span class="n">04</span><span class="t">Physical Pepper</span></div>
+        </div>
+        <div class="pd-pipe-bands">
+          <div class="pd-band k-sim" style="flex:1;">Set up the simulator</div>
+          <div class="pd-band k-real" style="flex:1;">Capture the real</div>
+          <div class="pd-band k-sim" style="flex:2;">Build worlds &amp; train</div>
+          <div class="pd-band k-real" style="flex:1;">Deploy to the real</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 2 · PHOTOGRAMMETRY ══════════════ -->
+    <section class="pd-slide">
+      <div class="pd-eyebrow">What I learned</div>
+      <h2 class="pd-h2">Photogrammetry: a room from photographs</h2>
+      <div class="pd-content is-centered">
+        <div class="pd-steps is-3">
+          <div class="pd-step">
+            <span class="n">01</span>
+            <h3>Capture</h3>
+            <p>Heavily overlapping phone photographs — the perimeter, then the interior, then an
+            orbit of each piece of furniture.</p>
+          </div>
+          <div class="pd-step">
+            <span class="n">02</span>
+            <h3>Three heights</h3>
+            <p>Floor level, Pepper's camera height at about 1.2 m, and above head height. The
+            policy sees the room from 1.2 m, and that is exactly where an eye-level-only pass is
+            worst.</p>
+          </div>
+          <div class="pd-step">
+            <span class="n">03</span>
+            <h3>Reconstruct</h3>
+            <p>The photographs are fused into a single textured mesh, exported and opened in
+            Blender 4.5.</p>
+          </div>
+        </div>
+        <div class="pd-callout">
+          <div class="q">A real room, captured and brought into Blender as a draft model — the path
+          works end to end. No tape measurements were taken on the day, so its metric scale is
+          still unverified.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 3 · BLENDER BEFORE / AFTER ══════════════ -->
+    <section class="pd-slide">
+      <div class="pd-eyebrow">What I learned</div>
+      <h2 class="pd-h2">Cleaning the scan in Blender</h2>
+      <div class="pd-content is-centered">
+        <p class="pd-body">A raw capture arrives with stray geometry and floating debris around the
+        room it was meant to reconstruct. Clearing that away is what turns a scan into something a
+        simulator can use.</p>
+        <div class="pd-video-pair">
+          <div class="pd-video">
+            <p class="miss">
+              Before.mp4<br>
+              <span style="font-size:15px;">The draft model as captured</span>
+            </p>
+            <video src="Before.mp4" autoplay muted loop playsinline></video>
+            <span class="pd-video-tag">Before</span>
+          </div>
+          <div class="pd-video">
+            <p class="miss">
+              After.mp4<br>
+              <span style="font-size:15px;">The same model, cleaned</span>
+            </p>
+            <video src="After.mp4" autoplay muted loop playsinline></video>
+            <span class="pd-video-tag">After</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 4 · IN THE SIMULATOR ══════════════ -->
+    <section class="pd-slide">
+      <div class="pd-eyebrow">What I learned</div>
+      <h2 class="pd-h2">The cleaned scan becomes a world</h2>
+      <div class="pd-content is-centered">
+        <div class="pd-sim-row">
+          <div class="pd-video">
+            <p class="miss">
+              Pepper in room.mp4<br>
+              <span style="font-size:15px;">Pepper standing in the scanned room</span>
+            </p>
+            <video src="Pepper%20in%20room.mp4" autoplay muted loop playsinline></video>
+            <span class="pd-video-tag">Simulation</span>
+          </div>
+          <div class="pd-sim-text">
+            <p class="pd-body">The cleaned mesh is imported twice over: a textured mesh of 27,255
+            triangles for the camera, and a separate 4,999-triangle collision mesh with the
+            ceiling stripped away for the physics engine. Pepper is then spawned into it and
+            stands on the scanned floor.</p>
+            <p class="pd-small">This is the demo capture, not the room the experiment will use —
+            a corridor of about 9 by 14 m, with no tape measurements behind it. Getting it to
+            load is the result; trusting its dimensions is not.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 5 · PEPPER ══════════════ -->
+    <section class="pd-slide">
+      <div class="pd-eyebrow">Where the project is</div>
+      <h2 class="pd-h2">Pepper takes commands — on the bench, not yet on the robot</h2>
+      <div class="pd-content is-centered">
+        <div class="pd-steps is-3">
+          <div class="pd-step">
+            <span class="n">01</span>
+            <h3>Two interpreters</h3>
+            <p>Pepper's NAOqi SDK is Python 2 only. ROS 2 Humble is Python 3.10. The two cannot
+            share a process.</p>
+          </div>
+          <div class="pd-step">
+            <span class="n">02</span>
+            <h3>A shim between them</h3>
+            <p>Every NAOqi call is quarantined in a Python 2 side-car, reachable over sockets:
+            commands on UDP 45455, the depth stream on TCP 45456.</p>
+          </div>
+          <div class="pd-step">
+            <span class="n">03</span>
+            <h3>One motion, two robots</h3>
+            <p>The real wave imports its waypoints from the simulated one — NAOqi and the URDF use
+            identical joint names, so retiming it changes both.</p>
+          </div>
+        </div>
+        <div class="pd-callout is-real">
+          <div class="q">None of it has touched a real robot yet. Wake, move, stop, rest and the
+          depth stream are all verified against a fake shim; the NAOqi calls themselves meet
+          reality for the first time on the day.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 6 · NEXT ══════════════ -->
+    <section class="pd-slide">
+      <div class="pd-eyebrow is-real">Next step</div>
+      <h2 class="pd-h2">Capture the room for real</h2>
+      <div class="pd-content is-centered">
+        <div class="pd-steps is-4">
+          <div class="pd-step">
+            <span class="n">01</span>
+            <h3>Capture</h3>
+            <p>The actual deployment room, with at least eight tape measurements across all three
+            axes, taken on the same visit.</p>
+          </div>
+          <div class="pd-step">
+            <span class="n">02</span>
+            <h3>Clean &amp; scale</h3>
+            <p>The same Blender pass as shown, then scaled to true metric dimensions and checked
+            against the tape.</p>
+          </div>
+          <div class="pd-step">
+            <span class="n">03</span>
+            <h3>Validate</h3>
+            <p>Check the reconstruction against the tape. Nothing has been through that gate yet,
+            so no room has earned its dimensions.</p>
+          </div>
+          <div class="pd-step">
+            <span class="n">04</span>
+            <h3>Run on Pepper</h3>
+            <p>Install the Python 2 side, check her NAOqi version, and move the real robot once.</p>
+          </div>
+        </div>
+        <p class="pd-small">Then SAC training in both worlds — the photogrammetric room and the
+        hand-made one — which is the comparison the whole project turns on.</p>
+      </div>
+    </section>
+
+    <!-- ══════════════ rail + help ══════════════ -->
+    <div class="pd-rail">
+      <span class="pd-rail-spacer"></span>
+      <span>Pepper Sim2Real</span>
+      <span class="pd-rail-count" id="pd-rail-count">01 / 06</span>
+      <div class="pd-progress" id="pd-progress"></div>
+    </div>
+
+    <div class="pd-help" id="pd-help">
+      <div class="pd-help-inner">
+        <h3>Keyboard</h3>
+        <div class="pd-help-row"><span>→ &nbsp; space</span><span>next slide</span></div>
+        <div class="pd-help-row"><span>←</span><span>previous slide</span></div>
+        <div class="pd-help-row"><span>home / end</span><span>first / last slide</span></div>
+        <div class="pd-help-row"><span>f</span><span>fullscreen</span></div>
+        <div class="pd-help-row"><span>?</span><span>close this</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  var stage    = document.getElementById('pd-stage');
+  var slides   = Array.prototype.slice.call(document.querySelectorAll('.pd-slide'));
+  var videos   = Array.prototype.slice.call(document.querySelectorAll('.pd-video video'));
+  var railCnt  = document.getElementById('pd-rail-count');
+  var progress = document.getElementById('pd-progress');
+  var help     = document.getElementById('pd-help');
+  var index    = 0;
+
+  // Only treat a clip as present once a frame has decoded; until then the caption stands in.
+  videos.forEach(function (v) {
+    v.addEventListener('loadeddata', function () { v.parentNode.classList.add('is-ready'); });
+  });
+
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+  function show(i) {
+    index = Math.max(0, Math.min(slides.length - 1, i));
+    slides.forEach(function (s, n) { s.classList.toggle('is-active', n === index); });
+    railCnt.textContent  = pad(index + 1) + ' / ' + pad(slides.length);
+    progress.style.width = ((index + 1) / slides.length * 100) + '%';
+    // Restart every clip on the slide being entered so it always plays from the top, and stop
+    // the rest — slide 3 carries two, and nothing should be decoding behind a hidden slide.
+    videos.forEach(function (v) {
+      if (v.closest('.pd-slide') === slides[index]) {
+        v.currentTime = 0;
+        var p = v.play();
+        if (p && p.catch) { p.catch(function () {}); }
+      } else {
+        v.pause();
+      }
+    });
+  }
+
+  function fit() {
+    var scale = Math.min(window.innerWidth / 1280, window.innerHeight / 720);
+    stage.style.transform = 'scale(' + scale + ')';
+  }
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); show(index + 1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp')                { e.preventDefault(); show(index - 1); }
+    else if (e.key === 'Home')                                           { e.preventDefault(); show(0); }
+    else if (e.key === 'End')                                            { e.preventDefault(); show(slides.length - 1); }
+    else if (e.key === '?' || e.key === '/')                             { help.classList.toggle('is-shown'); }
+    else if (e.key === 'Escape')                                         { help.classList.remove('is-shown'); }
+    else if (e.key === 'f' || e.key === 'F') {
+      if (document.fullscreenElement) { document.exitFullscreen(); }
+      else if (document.documentElement.requestFullscreen) { document.documentElement.requestFullscreen(); }
+    }
+  });
+
+  stage.addEventListener('click', function (e) {
+    if (help.classList.contains('is-shown')) { help.classList.remove('is-shown'); return; }
+    var rect = stage.getBoundingClientRect();
+    show(index + ((e.clientX - rect.left) < rect.width * 0.25 ? -1 : 1));
+  });
+
+  window.addEventListener('resize', fit);
+  fit();
+  show(0);
+  stage.focus();
+})();
+</script>

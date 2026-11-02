@@ -1,0 +1,17 @@
+\section{Conclusion}\label{sec:conclusion}
+This study built two simulators of the same room for Pepper, one from a photogrammetric scan and
+one by hand from tape measurements, trained a SAC navigation policy in each under identical domain
+randomisation, and deployed both on the real robot without further training.
+
+On H1, the photogrammetry policy has a significantly smaller sim-to-real gap: its success rate fell
+by 8 percentage points from simulation to the real robot, against 37 for
+the standard policy. On H2, its odometry-estimated success is 9 of 20 real routes against 6, which
+points the same way but is not statistically significant. Most real failures of both policies
+happened at the couch and the bag, where collision protection, unseen in training, stopped the
+robot.
+
+For the two policies tested, the results suggest that a reconstructed room transfers to the real
+robot more faithfully than a hand-built one made from the same measurements. Whether this holds
+across training seeds needs more than one deployed policy per branch. Photogrammetry alone is not enough, however:
+transfer also depends on modelling the robot's own behaviour, such as its collision protection,
+and confirming the real-world difference needs larger trials with external position tracking.

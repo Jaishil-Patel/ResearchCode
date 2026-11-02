@@ -1,0 +1,2977 @@
+From 7580ff7e71a3eafcf160ad2d4d8aa6683f14fdd0 Mon Sep 17 00:00:00 2001
+From: Jaishil-Patel <jaishilpatel1105@gmail.com>
+Date: Fri, 11 Sep 2026 09:42:58 +0200
+Subject: [PATCH 1/7] Port to ROS 2 Humble / Ignition Fortress, and add the
+ missing sensors
+
+Upstream (Sekkat et al.) targets Galactic in Docker. This is the port to Humble on
+WSL2, plus the three sensors the model was missing entirely.
+
+pepper_robot.gazebo shipped 28 sensor *frames* -- empty links behind fixed joints --
+and zero <sensor> elements, so nothing published depth, scan or IMU. Proposal S4.4.2
+fixes the observation modality as depth-based and identical across both branches, so
+this blocked the RL task outright. Added camera_depth (320x240, 58 deg, 0.4-8 m, 15 Hz)
+on Head, front_laser (gpu_lidar, 15 samples, 60 deg, 0.1-3 m, 10 Hz) on Tibia, and
+imu_torso (100 Hz) on base_link.
+
+Sensors attach to real parent links with explicit poses reproducing the frame offsets,
+not to the sensor frames themselves: URDF->SDF collapses those massless links into SDF
+<frame> elements, so <gazebo reference="CameraDepth_frame"> would not resolve.
+---
+ .docker/run.bash                              |  28 ++--
+ pepper_robot/launch/gz.launch.py              |  15 ++
+ .../pepper_robot/model.sdf                    | 139 +++++++++++++++++-
+ .../urdf/pepper_robot.gazebo                  | 119 +++++++++++++++
+ .../urdf/pepper_robot.ros2_control            |   2 +-
+ .../urdf/pepper_robot.urdf                    |  20 ++-
+ .../urdf/pepper_robot.urdf.xacro              |  12 ++
+ pepper_robot_ign/launch/bridge.launch.py      | 117 +++++++++++++++
+ pepper_robot_ign/worlds/follow_target.sdf     |  21 ++-
+ pepper_robot_moveit_config/rviz/moveit.rviz   |  13 +-
+ 10 files changed, 461 insertions(+), 25 deletions(-)
+ mode change 100755 => 100644 pepper_robot/launch/gz.launch.py
+
+diff --git a/.docker/run.bash b/.docker/run.bash
+index 15819fd..196c5a2 100755
+--- a/.docker/run.bash
++++ b/.docker/run.bash
+@@ -125,10 +125,15 @@ if [[ "${ENABLE_GPU,,}" = true ]]; then
+             NVIDIA_VISIBLE_DEVICES="all"
+             NVIDIA_DRIVER_CAPABILITIES="all"
+         )
+-    elif [[ $(getent group video) ]]; then
+-        GPU_OPT="--device=/dev/dri:/dev/dri --group-add video"
+-    else
+-        GPU_OPT="--device=/dev/dri:/dev/dri"
++    elif [[ -e /dev/dxg ]]; then
++        echo "INFO: WSL GPU detected."
++        GPU_OPT="--device=/dev/dxg:/dev/dxg"
++    elif [[ -e /dev/dri ]]; then
++        if getent group video >/dev/null; then
++            GPU_OPT="--device=/dev/dri:/dev/dri --group-add video"
++        else
++            GPU_OPT="--device=/dev/dri:/dev/dri"
++        fi
+     fi
+ fi
+ 
+@@ -144,14 +149,19 @@ if [[ "${ENABLE_GUI,,}" = true ]]; then
+     fi
+     # GUI-enabling volumes
+     GUI_VOLUMES=(
+-        "${XAUTH}:${XAUTH}"
+-        "/tmp/.X11-unix:/tmp/.X11-unix"
+-        "/dev/input:/dev/input"
++    "${XAUTH}:${XAUTH}"
++    "/tmp/.X11-unix:/tmp/.X11-unix"
++    "/dev/input:/dev/input"
++
++    "/mnt/wslg:/mnt/wslg"
++    "${XDG_RUNTIME_DIR}:${XDG_RUNTIME_DIR}"
+     )
+     # GUI-enabling environment variables
+     GUI_ENVS=(
+-        DISPLAY="${DISPLAY}"
+-        XAUTHORITY="${XAUTH}"
++    DISPLAY="${DISPLAY}"
++    WAYLAND_DISPLAY="${WAYLAND_DISPLAY}"
++    XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}"
++    XAUTHORITY="${XAUTH}"
+     )
+ fi
+ 
+diff --git a/pepper_robot/launch/gz.launch.py b/pepper_robot/launch/gz.launch.py
+old mode 100755
+new mode 100644
+index a4a7737..c031b59
+--- a/pepper_robot/launch/gz.launch.py
++++ b/pepper_robot/launch/gz.launch.py
+@@ -36,11 +36,13 @@ def generate_launch_description() -> LaunchDescription:
+     name = LaunchConfiguration("name")
+     prefix = LaunchConfiguration("prefix")
+     collision = LaunchConfiguration("collision")
++    sensors = LaunchConfiguration("sensors")
+     ros2_control_command_interface = LaunchConfiguration(
+         "ros2_control_command_interface"
+     )
+     mimic_finger_joints = LaunchConfiguration("mimic_finger_joints")
+     gazebo_preserve_fixed_joint = LaunchConfiguration("gazebo_preserve_fixed_joint")
++    enable_rviz = LaunchConfiguration("enable_rviz")
+     rviz_config = LaunchConfiguration("rviz_config")
+     use_sim_time = LaunchConfiguration("use_sim_time")
+     ign_verbosity = LaunchConfiguration("ign_verbosity")
+@@ -57,6 +59,7 @@ def generate_launch_description() -> LaunchDescription:
+             ["name:=", name],
+             ["prefix:=", prefix],
+             ["collision:=", collision],
++            ["sensors:=", sensors],
+             ["ros2_control:=", "true"],
+             ["ros2_control_plugin:=", "ign"],
+             ["ros2_control_command_interface:=", ros2_control_command_interface],
+@@ -111,6 +114,7 @@ def generate_launch_description() -> LaunchDescription:
+                                 "gazebo_preserve_fixed_joint",
+                                 gazebo_preserve_fixed_joint,
+                             ),
++                            ("enable_rviz", enable_rviz),
+                             ("rviz_config", rviz_config),
+                             ("use_sim_time", use_sim_time),
+                             ("log_level", log_level),
+@@ -215,6 +219,12 @@ def generate_declared_arguments() -> List[DeclareLaunchArgument]:
+             default_value="false",
+             description="Flag to enable collision geometry.",
+         ),
++        # Sensors
++        DeclareLaunchArgument(
++            "sensors",
++            default_value="true",
++            description="Flag to enable the simulated depth camera, front lidar and torso IMU. Set false for a faster GUI when only motion is needed, which also avoids the ogre2 depth-camera crash under hardware GL on WSL2.",
++        ),
+         # ROS 2 control
+         DeclareLaunchArgument(
+             "ros2_control_command_interface",
+@@ -234,6 +244,11 @@ def generate_declared_arguments() -> List[DeclareLaunchArgument]:
+             description="Flag to preserve fixed joints and prevent lumping when generating SDF for Gazebo.",
+         ),
+         # Miscellaneous
++        DeclareLaunchArgument(
++            "enable_rviz",
++            default_value="true",
++            description="Flag to enable RViz2. Set false on WSL2 if RViz segfaults — its death otherwise tears down the whole launch, Gazebo included.",
++        ),
+         DeclareLaunchArgument(
+             "rviz_config",
+             default_value=path.join(
+diff --git a/pepper_robot_description/pepper_robot/model.sdf b/pepper_robot_description/pepper_robot/model.sdf
+index 6870a58..5de99e2 100644
+--- a/pepper_robot_description/pepper_robot/model.sdf
++++ b/pepper_robot_description/pepper_robot/model.sdf
+@@ -3016,7 +3016,7 @@
+       <self_collide>false</self_collide>
+     </link>
+     <plugin name='ign_ros2_control::IgnitionROS2ControlPlugin' filename='ign_ros2_control-system'>
+-      <parameters>/root/ws/install/share/pepper_robot_moveit_config/config/controllers_position.yaml</parameters>
++      <parameters>/home/jaishil/Research/pepper-sim2real/ros2_ws/install/share/pepper_robot_moveit_config/config/controllers_position.yaml</parameters>
+     </plugin>
+     <plugin name='ignition::gazebo::systems::PosePublisher' filename='ignition-gazebo-pose-publisher-system'>
+       <use_pose_vector_msg>true</use_pose_vector_msg>
+@@ -3025,7 +3025,6 @@
+       <publish_collision_pose>false</publish_collision_pose>
+       <publish_visual_pose>false</publish_visual_pose>
+     </plugin>
+-    <static>false</static>
+     <plugin name='ignition::gazebo::systems::DiffDrive' filename='ignition-gazebo-diff-drive-system'>
+       <left_joint>WheelFL</left_joint>
+       <right_joint>WheelFR</right_joint>
+@@ -3033,5 +3032,141 @@
+       <wheel_separation>0.310</wheel_separation>
+       <wheel_radius>0.07</wheel_radius>
+     </plugin>
++    <frame name='Accelerometer_sensor_fixedjoint' attached_to='torso'>
++      <pose>0.00239 -0.03575 0.00626 0 -0 0</pose>
++    </frame>
++    <frame name='ImuTorsoAccelerometer_frame' attached_to='Accelerometer_sensor_fixedjoint'/>
++    <frame name='ChestBoard/Button_sensor_fixedjoint' attached_to='torso'>
++      <pose>0.049871 0.001588 0.055163 0 -0 0</pose>
++    </frame>
++    <frame name='ChestButton_frame' attached_to='ChestBoard/Button_sensor_fixedjoint'/>
++    <frame name='Gyrometer_sensor_fixedjoint' attached_to='torso'>
++      <pose>0.00204 -0.03491 -0.00959 0 -0 0</pose>
++    </frame>
++    <frame name='ImuTorsoGyrometer_frame' attached_to='Gyrometer_sensor_fixedjoint'/>
++    <frame name='Tablet_sensor_fixedjoint' attached_to='torso'>
++      <pose>0.083925 0 0.06251 0 -0.523599 0</pose>
++    </frame>
++    <frame name='Tablet_frame' attached_to='Tablet_sensor_fixedjoint'/>
++    <frame name='base_link_fixedjoint' attached_to='base_link'>
++      <pose>0 0 0.82 0 -0 0</pose>
++    </frame>
++    <frame name='torso' attached_to='base_link_fixedjoint'/>
++    <frame name='CameraBottom_optical_frame_fixedjoint' attached_to='CameraBottom_frame'>
++      <pose>0 0 0 -1.5708 -0 -1.5708</pose>
++    </frame>
++    <frame name='CameraBottom_optical_frame' attached_to='CameraBottom_optical_frame_fixedjoint'/>
++    <frame name='CameraBottom_sensor_fixedjoint' attached_to='Head'>
++      <pose>0.09262 0 0.06177 0 0.698132 0</pose>
++    </frame>
++    <frame name='CameraBottom_frame' attached_to='CameraBottom_sensor_fixedjoint'/>
++    <frame name='CameraDepth_optical_frame_fixedjoint' attached_to='CameraDepth_frame'>
++      <pose>0 0 0 -1.5708 -0 -1.5708</pose>
++    </frame>
++    <frame name='CameraDepth_optical_frame' attached_to='CameraDepth_optical_frame_fixedjoint'/>
++    <frame name='CameraDepth_sensor_fixedjoint' attached_to='Head'>
++      <pose>0.05138 0.039 0.1194 0 -0 0</pose>
++    </frame>
++    <frame name='CameraDepth_frame' attached_to='CameraDepth_sensor_fixedjoint'/>
++    <frame name='CameraTop_optical_frame_fixedjoint' attached_to='CameraTop_frame'>
++      <pose>0 0 0 -1.5708 -0 -1.5708</pose>
++    </frame>
++    <frame name='CameraTop_optical_frame' attached_to='CameraTop_optical_frame_fixedjoint'/>
++    <frame name='CameraTop_sensor_fixedjoint' attached_to='Head'>
++      <pose>0.08601 0 0.16284 0 -0 0</pose>
++    </frame>
++    <frame name='CameraTop_frame' attached_to='CameraTop_sensor_fixedjoint'/>
++    <frame name='Head/Touch/Front_sensor_fixedjoint' attached_to='Head'>
++      <pose>0.028175 0 0.21267 0 0.20944 0</pose>
++    </frame>
++    <frame name='HeadTouchFront_frame' attached_to='Head/Touch/Front_sensor_fixedjoint'/>
++    <frame name='Head/Touch/Middle_sensor_fixedjoint' attached_to='Head'>
++      <pose>0.0041 0 0.2159 0 -0.034907 0</pose>
++    </frame>
++    <frame name='HeadTouchMiddle_frame' attached_to='Head/Touch/Middle_sensor_fixedjoint'/>
++    <frame name='Head/Touch/Rear_sensor_fixedjoint' attached_to='Head'>
++      <pose>-0.03376 0 0.21052 0 -0.314159 0</pose>
++    </frame>
++    <frame name='HeadTouchRear_frame' attached_to='Head/Touch/Rear_sensor_fixedjoint'/>
++    <frame name='SpeakerLeft_sensor_fixedjoint' attached_to='Head'>
++      <pose>0 0 0 0 -0 0</pose>
++    </frame>
++    <frame name='LSpeaker_frame' attached_to='SpeakerLeft_sensor_fixedjoint'/>
++    <frame name='SpeakerRight_sensor_fixedjoint' attached_to='Head'>
++      <pose>0 0 0 0 -0 0</pose>
++    </frame>
++    <frame name='RSpeaker_frame' attached_to='SpeakerRight_sensor_fixedjoint'/>
++    <frame name='AccelerometerBase_sensor_fixedjoint' attached_to='Tibia'>
++      <pose>0.0147 -0.0017 -0.26319 0 -0 0</pose>
++    </frame>
++    <frame name='ImuBaseAccelerometer_frame' attached_to='AccelerometerBase_sensor_fixedjoint'/>
++    <frame name='Bumper/Back_sensor_fixedjoint' attached_to='Tibia'>
++      <pose>-0.251 0 -0.264 0 0 -3.14159</pose>
++    </frame>
++    <frame name='BumperB_frame' attached_to='Bumper/Back_sensor_fixedjoint'/>
++    <frame name='Bumper/FrontLeft_sensor_fixedjoint' attached_to='Tibia'>
++      <pose>0.129 0.227 -0.264 0 -0 0.48886</pose>
++    </frame>
++    <frame name='BumperFL_frame' attached_to='Bumper/FrontLeft_sensor_fixedjoint'/>
++    <frame name='Bumper/FrontRight_sensor_fixedjoint' attached_to='Tibia'>
++      <pose>0.129 -0.227 -0.264 0 0 -0.48886</pose>
++    </frame>
++    <frame name='BumperFR_frame' attached_to='Bumper/FrontRight_sensor_fixedjoint'/>
++    <frame name='LaserSensor/Front_projected_sensor_fixedjoint' attached_to='Tibia'>
++      <pose>0.0562 0 -0.334 0 -0 0</pose>
++    </frame>
++    <frame name='SurroundingFrontLaser_frame' attached_to='LaserSensor/Front_projected_sensor_fixedjoint'/>
++    <frame name='LaserSensor/Front_sensor_fixedjoint' attached_to='Tibia'>
++      <pose>0.0562 0 -0.0692 0 0.349066 0</pose>
++    </frame>
++    <frame name='SurroundingFrontLaser_device_frame' attached_to='LaserSensor/Front_sensor_fixedjoint'/>
++    <frame name='LaserSensor/Left_projected_sensor_fixedjoint' attached_to='Tibia'>
++      <pose>-0.018 0.0899 -0.334 0 -0 1.75728</pose>
++    </frame>
++    <frame name='SurroundingLeftLaser_frame' attached_to='LaserSensor/Left_projected_sensor_fixedjoint'/>
++    <frame name='LaserSensor/Left_sensor_fixedjoint' attached_to='Tibia'>
++      <pose>-0.018 0.0899 -0.0759 0 0.349066 1.5708</pose>
++    </frame>
++    <frame name='SurroundingLeftLaser_device_frame' attached_to='LaserSensor/Left_sensor_fixedjoint'/>
++    <frame name='LaserSensor/Right_projected_sensor_fixedjoint' attached_to='Tibia'>
++      <pose>-0.018 -0.0899 -0.334 0 0 -1.75728</pose>
++    </frame>
++    <frame name='SurroundingRightLaser_frame' attached_to='LaserSensor/Right_projected_sensor_fixedjoint'/>
++    <frame name='LaserSensor/Right_sensor_fixedjoint' attached_to='Tibia'>
++      <pose>-0.018 -0.0899 -0.0759 -0 0.349066 -1.5708</pose>
++    </frame>
++    <frame name='SurroundingRightLaser_device_frame' attached_to='LaserSensor/Right_sensor_fixedjoint'/>
++    <frame name='LaserSensor/Shovel_sensor_fixedjoint' attached_to='Tibia'>
++      <pose>0.0562 0 -0.0692 0 0.349066 0</pose>
++    </frame>
++    <frame name='ShovelLaser_frame' attached_to='LaserSensor/Shovel_sensor_fixedjoint'/>
++    <frame name='LaserSensor/VerticalLeft_sensor_fixedjoint' attached_to='Tibia'>
++      <pose>0.0562 0 -0.0692 0 0.349066 0</pose>
++    </frame>
++    <frame name='VerticalLeftLaser_frame' attached_to='LaserSensor/VerticalLeft_sensor_fixedjoint'/>
++    <frame name='LaserSensor/VerticalRight_sensor_fixedjoint' attached_to='Tibia'>
++      <pose>0.0562 0 -0.0692 0 0.349066 0</pose>
++    </frame>
++    <frame name='VerticalRightLaser_frame' attached_to='LaserSensor/VerticalRight_sensor_fixedjoint'/>
++    <frame name='Sonar/Back_sensor_fixedjoint' attached_to='Tibia'>
++      <pose>-0.0718 0 -0.0534 -0 -0.209438 -3.14159</pose>
++    </frame>
++    <frame name='SonarBack_frame' attached_to='Sonar/Back_sensor_fixedjoint'/>
++    <frame name='Sonar/Front_sensor_fixedjoint' attached_to='Tibia'>
++      <pose>0.0699 0 -0.1023 0 -0.322858 0</pose>
++    </frame>
++    <frame name='SonarFront_frame' attached_to='Sonar/Front_sensor_fixedjoint'/>
++    <frame name='base_footprint_joint' attached_to='Tibia'>
++      <pose>0 0 -0.334 0 -0 0</pose>
++    </frame>
++    <frame name='base_footprint' attached_to='base_footprint_joint'/>
++    <frame name='LHand/Touch/Back_sensor_fixedjoint' attached_to='l_wrist'>
++      <pose>0.0523 0 0.0304 -1.57079 -1.57079 3e-06</pose>
++    </frame>
++    <frame name='LHandTouchBack_frame' attached_to='LHand/Touch/Back_sensor_fixedjoint'/>
++    <frame name='RHand/Touch/Back_sensor_fixedjoint' attached_to='r_wrist'>
++      <pose>0.0523 0 0.0304 -1.57079 -1.57079 3e-06</pose>
++    </frame>
++    <frame name='RHandTouchBack_frame' attached_to='RHand/Touch/Back_sensor_fixedjoint'/>
+   </model>
+ </sdf>
+diff --git a/pepper_robot_description/urdf/pepper_robot.gazebo b/pepper_robot_description/urdf/pepper_robot.gazebo
+index 703778d..7abc517 100644
+--- a/pepper_robot_description/urdf/pepper_robot.gazebo
++++ b/pepper_robot_description/urdf/pepper_robot.gazebo
+@@ -49,6 +49,125 @@
+   </xacro:macro>
+ 
+ 
++  <!--        -->
++  <!-- Sensor -->
++  <!--        -->
++  <!-- Depth camera, mirroring the CameraDepth_frame of pepper_sensors.xacro.
++       Attached to Head rather than to CameraDepth_frame: the sensor frames are massless links
++       behind fixed joints, which URDF->SDF conversion collapses into their parent, so a
++       <gazebo reference="CameraDepth_frame"> would not resolve. The pose below reproduces the
++       CameraDepth_frame offset exactly, so the sensor and the TF frame stay co-located.
++       Defaults approximate Pepper's ASUS-Xtion-class unit (Gomez et al. 2018). -->
++  <xacro:macro name="ign_depth_camera" params="
++   topic:=depth_camera
++   update_rate:=15
++   width:=320
++   height:=240
++   horizontal_fov:=1.0123
++   near_clip:=0.4
++   far_clip:=8.0
++">
++    <gazebo reference="Head">
++      <sensor name="camera_depth" type="depth_camera">
++        <topic>${topic}</topic>
++        <update_rate>${update_rate}</update_rate>
++        <always_on>true</always_on>
++        <visualize>false</visualize>
++        <!-- Matches CameraDepth_frame: parent Head, xyz 0.05138 0.039 0.1194, rpy 0 0 0 -->
++        <pose>0.05138 0.039 0.1194 0 0 0</pose>
++        <camera>
++          <horizontal_fov>${horizontal_fov}</horizontal_fov>
++          <image>
++            <width>${width}</width>
++            <height>${height}</height>
++            <format>R_FLOAT32</format>
++          </image>
++          <clip>
++            <near>${near_clip}</near>
++            <far>${far_clip}</far>
++          </clip>
++        </camera>
++      </sensor>
++    </gazebo>
++  </xacro:macro>
++
++
++  <!--        -->
++  <!-- Sensor -->
++  <!--        -->
++  <!-- Front surrounding laser. Placed at the SurroundingFrontLaser_device_frame position on Tibia
++       (0.0562 0 -0.0692), i.e. ~0.265 m above the ground plane.
++
++       Note on orientation: the hardware frame carries a 0.349066 rad (20 deg) downward pitch, and
++       the sibling "projected" frame sits at z=-0.334, which is exactly ground level; that frame
++       is NAOqi's ground projection of the readings, not a physical sensor location. Simulating a
++       pitched-down beam would return floor hits at short range, so the default here is a
++       horizontal scan, which is what NAOqi's projected laser API effectively exposes to a
++       navigation client. Override `pitch` to model the raw pitched beam instead. -->
++  <xacro:macro name="ign_front_lidar" params="
++   topic:=scan
++   update_rate:=10
++   samples:=15
++   min_angle:=-0.5236
++   max_angle:=0.5236
++   min_range:=0.1
++   max_range:=3.0
++   pitch:=0.0
++">
++    <gazebo reference="Tibia">
++      <sensor name="front_laser" type="gpu_lidar">
++        <topic>${topic}</topic>
++        <update_rate>${update_rate}</update_rate>
++        <always_on>true</always_on>
++        <visualize>true</visualize>
++        <pose>0.0562 0 -0.0692 0 ${pitch} 0</pose>
++        <lidar>
++          <scan>
++            <horizontal>
++              <samples>${samples}</samples>
++              <resolution>1</resolution>
++              <min_angle>${min_angle}</min_angle>
++              <max_angle>${max_angle}</max_angle>
++            </horizontal>
++            <vertical>
++              <samples>1</samples>
++              <resolution>1</resolution>
++              <min_angle>0</min_angle>
++              <max_angle>0</max_angle>
++            </vertical>
++          </scan>
++          <range>
++            <min>${min_range}</min>
++            <max>${max_range}</max>
++            <resolution>0.01</resolution>
++          </range>
++        </lidar>
++      </sensor>
++    </gazebo>
++  </xacro:macro>
++
++
++  <!--        -->
++  <!-- Sensor -->
++  <!--        -->
++  <!-- Torso IMU, mirroring ImuTorsoGyrometer_frame. Requires the world to load
++       ignition::gazebo::systems::Imu; the Sensors system alone does not drive IMUs. -->
++  <xacro:macro name="ign_imu" params="
++   topic:=imu
++   update_rate:=100
++">
++    <gazebo reference="torso">
++      <sensor name="imu_torso" type="imu">
++        <topic>${topic}</topic>
++        <update_rate>${update_rate}</update_rate>
++        <always_on>true</always_on>
++        <!-- Matches ImuTorsoGyrometer_frame: parent torso, xyz 0.00204 -0.03491 -0.00959 -->
++        <pose>0.00204 -0.03491 -0.00959 0 0 0</pose>
++      </sensor>
++    </gazebo>
++  </xacro:macro>
++
++
+   <!--       -->
+   <!-- Macro -->
+   <!--       -->
+diff --git a/pepper_robot_description/urdf/pepper_robot.ros2_control b/pepper_robot_description/urdf/pepper_robot.ros2_control
+index 96bc483..b26026d 100644
+--- a/pepper_robot_description/urdf/pepper_robot.ros2_control
++++ b/pepper_robot_description/urdf/pepper_robot.ros2_control
+@@ -21,7 +21,7 @@
+    initial_positions_file:=${default_initial_positions_file}
+ ">
+     <xacro:property name="initial_positions"
+-      value="${load_yaml(initial_positions_file)['initial_joint_positions']}" />
++      value="${xacro.load_yaml(initial_positions_file)['initial_joint_positions']}" />
+ 
+     <!-- <ros2_control name="${prefix}${name}_wheel" type="system">
+       <hardware>
+diff --git a/pepper_robot_description/urdf/pepper_robot.urdf b/pepper_robot_description/urdf/pepper_robot.urdf
+index 1102b5c..0262e6f 100644
+--- a/pepper_robot_description/urdf/pepper_robot.urdf
++++ b/pepper_robot_description/urdf/pepper_robot.urdf
+@@ -1,6 +1,6 @@
+ <?xml version="1.0" ?>
+ <!-- =================================================================================== -->
+-<!-- |    This document was autogenerated by xacro from /root/ws/src/pepper_robot/pepper_robot_description/urdf/pepper_robot.urdf.xacro | -->
++<!-- |    This document was autogenerated by xacro from /home/jaishil/Research/pepper-sim2real/ros2_ws/src/pepper_ign_moveit2/pepper_robot_description/urdf/pepper_robot.urdf.xacro | -->
+ <!-- |    EDITING THIS FILE BY HAND IS NOT RECOMMENDED                                 | -->
+ <!-- =================================================================================== -->
+ <!-- URDF for Pepper -->
+@@ -314,7 +314,12 @@
+     <axis xyz="1.0 0 0"/>
+     <limit effort="0.144" lower="0.02" upper="0.98" velocity="12.56"/>
+   </joint>
+-  <link name="l_gripper"/>
++  <link name="l_gripper">
++    <inertial>
++      <mass value="1e-5"/>
++      <inertia ixx="1e-35" ixy="0.0" ixz="0.0" iyy="1e-35" iyz="0.0" izz="1e-35"/>
++    </inertial>
++  </link>
+   <joint name="RShoulderPitch" type="revolute">
+     <parent link="torso"/>
+     <child link="RShoulder"/>
+@@ -452,7 +457,12 @@
+     <axis xyz="1.0 0 0"/>
+     <limit effort="0.144" lower="0.02" upper="0.98" velocity="12.56"/>
+   </joint>
+-  <link name="r_gripper"/>
++  <link name="r_gripper">
++    <inertial>
++      <mass value="1e-5"/>
++      <inertia ixx="1e-35" ixy="0.0" ixz="0.0" iyy="1e-35" iyz="0.0" izz="1e-35"/>
++    </inertial>
++  </link>
+   <link name="SonarBack_frame"/>
+   <joint name="Sonar/Back_sensor_fixedjoint" type="fixed">
+     <parent link="Tibia"/>
+@@ -1534,7 +1544,7 @@
+       <state_interface name="effort"/>
+     </joint>
+     <joint name="RShoulderRoll">
+-      <param name="initial_position">0.17</param>
++      <param name="initial_position">-0.17</param>
+       <command_interface name="position"/>
+       <state_interface name="position"/>
+       <state_interface name="velocity"/>
+@@ -1548,7 +1558,7 @@
+       <state_interface name="effort"/>
+     </joint>
+     <joint name="RElbowRoll">
+-      <param name="initial_position">-0.17</param>
++      <param name="initial_position">0.17</param>
+       <command_interface name="position"/>
+       <state_interface name="position"/>
+       <state_interface name="velocity"/>
+diff --git a/pepper_robot_description/urdf/pepper_robot.urdf.xacro b/pepper_robot_description/urdf/pepper_robot.urdf.xacro
+index 7f5b112..afd9ee2 100644
+--- a/pepper_robot_description/urdf/pepper_robot.urdf.xacro
++++ b/pepper_robot_description/urdf/pepper_robot.urdf.xacro
+@@ -29,6 +29,11 @@
+   <xacro:arg name="ros2_controller_parameters"
+     default="$(find pepper_robot_moveit_config)/config/controllers_$(arg ros2_control_command_interface).yaml" />
+ 
++  <!-- Flag to add simulated exteroceptive sensors (depth camera, front laser, IMU).
++       Required for RL navigation: pepper_sensors.xacro provides TF frames only, with no
++       <sensor> elements, so without these the robot publishes no observations. -->
++  <xacro:arg name="sensors" default="true" />
++
+   <!--       -->
+   <!-- Robot -->
+   <!--       -->
+@@ -67,4 +72,11 @@
+   <xacro:gazebo_misc_references />
+   <xacro:ign_pose_publisher />
+   <xacro:ign_diff_drive />
++
++  <!-- Gazebo - Simulated sensors -->
++  <xacro:if value="$(arg sensors)">
++    <xacro:ign_depth_camera />
++    <xacro:ign_front_lidar />
++    <xacro:ign_imu />
++  </xacro:if>
+ </robot>
+diff --git a/pepper_robot_ign/launch/bridge.launch.py b/pepper_robot_ign/launch/bridge.launch.py
+index a88b8a0..31e08cf 100644
+--- a/pepper_robot_ign/launch/bridge.launch.py
++++ b/pepper_robot_ign/launch/bridge.launch.py
+@@ -33,6 +33,19 @@ bridges = {
+     "odom": ("nav_msgs/msg/Odometry" + DIR_IGN_TO_ROS2 + "ignition.msgs.Odometry"),
+     "odom_tf": ("tf2_msgs/msg/TFMessage" + DIR_IGN_TO_ROS2 + "ignition.msgs.Pose_V"),
+     "cmd_vel": ("geometry_msgs/msg/Twist" + DIR_ROS2_TO_IGN + "ignition.msgs.Twist"),
++    # Exteroceptive sensors (see ign_depth_camera / ign_front_lidar / ign_imu in
++    # pepper_robot.gazebo). These carry the RL observation space.
++    "depth_image": ("sensor_msgs/msg/Image" + DIR_IGN_TO_ROS2 + "ignition.msgs.Image"),
++    "depth_camera_info": (
++        "sensor_msgs/msg/CameraInfo" + DIR_IGN_TO_ROS2 + "ignition.msgs.CameraInfo"
++    ),
++    "depth_points": (
++        "sensor_msgs/msg/PointCloud2"
++        + DIR_IGN_TO_ROS2
++        + "ignition.msgs.PointCloudPacked"
++    ),
++    "scan": ("sensor_msgs/msg/LaserScan" + DIR_IGN_TO_ROS2 + "ignition.msgs.LaserScan"),
++    "imu": ("sensor_msgs/msg/Imu" + DIR_IGN_TO_ROS2 + "ignition.msgs.IMU"),
+ }
+ 
+ 
+@@ -55,6 +68,11 @@ def generate_launch_description():
+         "odom": LaunchConfiguration("bridge_odom"),
+         "odom_tf": LaunchConfiguration("bridge_odom_tf"),
+         "cmd_vel": LaunchConfiguration("bridge_cmd_vel"),
++        "depth_image": LaunchConfiguration("bridge_depth_image"),
++        "depth_camera_info": LaunchConfiguration("bridge_depth_camera_info"),
++        "depth_points": LaunchConfiguration("bridge_depth_points"),
++        "scan": LaunchConfiguration("bridge_scan"),
++        "imu": LaunchConfiguration("bridge_imu"),
+     }
+     ign_topic = {
+         "clock": LaunchConfiguration("ign_clock"),
+@@ -67,6 +85,11 @@ def generate_launch_description():
+         "odom": LaunchConfiguration("ign_odom"),
+         "odom_tf": LaunchConfiguration("ign_odom_tf"),
+         "cmd_vel": LaunchConfiguration("ign_cmd_vel"),
++        "depth_image": LaunchConfiguration("ign_depth_image"),
++        "depth_camera_info": LaunchConfiguration("ign_depth_camera_info"),
++        "depth_points": LaunchConfiguration("ign_depth_points"),
++        "scan": LaunchConfiguration("ign_scan"),
++        "imu": LaunchConfiguration("ign_imu"),
+     }
+     ros_topic = {
+         "clock": LaunchConfiguration("ros_clock"),
+@@ -79,6 +102,11 @@ def generate_launch_description():
+         "odom": LaunchConfiguration("ros_odom"),
+         "odom_tf": LaunchConfiguration("ros_odom_tf"),
+         "cmd_vel": LaunchConfiguration("ros_cmd_vel"),
++        "depth_image": LaunchConfiguration("ros_depth_image"),
++        "depth_camera_info": LaunchConfiguration("ros_depth_camera_info"),
++        "depth_points": LaunchConfiguration("ros_depth_points"),
++        "scan": LaunchConfiguration("ros_scan"),
++        "imu": LaunchConfiguration("ros_imu"),
+     }
+     use_sim_time = LaunchConfiguration("use_sim_time")
+     log_level = LaunchConfiguration("log_level")
+@@ -245,6 +273,31 @@ def generate_declared_arguments() -> List[DeclareLaunchArgument]:
+             default_value="true",
+             description="Flag to enable bridging of `cmd_vel` (ROS 2 -> IGN).",
+         ),
++        DeclareLaunchArgument(
++            "bridge_depth_image",
++            default_value="true",
++            description="Flag to enable bridging of `depth_image` (IGN -> ROS 2).",
++        ),
++        DeclareLaunchArgument(
++            "bridge_depth_camera_info",
++            default_value="true",
++            description="Flag to enable bridging of `depth_camera_info` (IGN -> ROS 2).",
++        ),
++        DeclareLaunchArgument(
++            "bridge_depth_points",
++            default_value="false",
++            description="Flag to enable bridging of `depth_points` (IGN -> ROS 2). Off by default: the point cloud is bandwidth-heavy and the depth image is the RL observation.",
++        ),
++        DeclareLaunchArgument(
++            "bridge_scan",
++            default_value="true",
++            description="Flag to enable bridging of `scan` (IGN -> ROS 2).",
++        ),
++        DeclareLaunchArgument(
++            "bridge_imu",
++            default_value="true",
++            description="Flag to enable bridging of `imu` (IGN -> ROS 2).",
++        ),
+         # Source topic names
+         DeclareLaunchArgument(
+             "ign_clock",
+@@ -300,6 +353,33 @@ def generate_declared_arguments() -> List[DeclareLaunchArgument]:
+             default_value=["/model/", LaunchConfiguration("robot_name"), "/cmd_vel"],
+             description="Ignition topic for `cmd_vel`.",
+         ),
++        # Sensor source topics. These are NOT model-namespaced: the sensors in
++        # pepper_robot.gazebo declare an explicit <topic>, which Ignition uses verbatim.
++        DeclareLaunchArgument(
++            "ign_depth_image",
++            default_value="/depth_camera",
++            description="Ignition topic for `depth_image`.",
++        ),
++        DeclareLaunchArgument(
++            "ign_depth_camera_info",
++            default_value="/depth_camera/camera_info",
++            description="Ignition topic for `depth_camera_info`.",
++        ),
++        DeclareLaunchArgument(
++            "ign_depth_points",
++            default_value="/depth_camera/points",
++            description="Ignition topic for `depth_points`.",
++        ),
++        DeclareLaunchArgument(
++            "ign_scan",
++            default_value="/scan",
++            description="Ignition topic for `scan`.",
++        ),
++        DeclareLaunchArgument(
++            "ign_imu",
++            default_value="/imu",
++            description="Ignition topic for `imu`.",
++        ),
+         # ROS topic names
+         DeclareLaunchArgument(
+             "ros_clock", default_value="/clock", description="ROS 2 topic for `clock`."
+@@ -341,6 +421,43 @@ def generate_declared_arguments() -> List[DeclareLaunchArgument]:
+             default_value=["/", LaunchConfiguration("robot_name"), "/cmd_vel"],
+             description="ROS 2 topic for `cmd_vel`.",
+         ),
++        DeclareLaunchArgument(
++            "ros_depth_image",
++            default_value=[
++                "/",
++                LaunchConfiguration("robot_name"),
++                "/depth_camera/image_raw",
++            ],
++            description="ROS 2 topic for `depth_image`.",
++        ),
++        DeclareLaunchArgument(
++            "ros_depth_camera_info",
++            default_value=[
++                "/",
++                LaunchConfiguration("robot_name"),
++                "/depth_camera/camera_info",
++            ],
++            description="ROS 2 topic for `depth_camera_info`.",
++        ),
++        DeclareLaunchArgument(
++            "ros_depth_points",
++            default_value=[
++                "/",
++                LaunchConfiguration("robot_name"),
++                "/depth_camera/points",
++            ],
++            description="ROS 2 topic for `depth_points`.",
++        ),
++        DeclareLaunchArgument(
++            "ros_scan",
++            default_value=["/", LaunchConfiguration("robot_name"), "/scan"],
++            description="ROS 2 topic for `scan`.",
++        ),
++        DeclareLaunchArgument(
++            "ros_imu",
++            default_value=["/", LaunchConfiguration("robot_name"), "/imu"],
++            description="ROS 2 topic for `imu`.",
++        ),
+         # Miscellaneous
+         DeclareLaunchArgument(
+             "use_sim_time",
+diff --git a/pepper_robot_ign/worlds/follow_target.sdf b/pepper_robot_ign/worlds/follow_target.sdf
+index e03ac27..e9f27cb 100644
+--- a/pepper_robot_ign/worlds/follow_target.sdf
++++ b/pepper_robot_ign/worlds/follow_target.sdf
+@@ -28,8 +28,27 @@
+     <plugin filename="ignition-gazebo-user-commands-system" name="ignition::gazebo::systems::UserCommands">
+     </plugin>
+ 
+-    <!-- Sensors -->
++    <!-- Sensors (rendering-based: camera, depth camera, gpu_lidar).
++
++         WSL2 NOTE - measured 2026-07-31, applies to every rendered sensor:
++           ogre2 + hardware GL  -> server aborts (Ogre::UnimplementedException in
++                                   GL3PlusTextureGpu::copyTo, during mipmap generation)
++           ogre  + hardware GL  -> runs, but gpu_lidar returns EVERY beam at <min> range.
++                                   It fails silently with no error in the log. Verified against
++                                   a known 1.4 m wall: correct in a 2-primitive scene, garbage
++                                   once Pepper's ~100 meshes are in the scene. Do not use it.
++           ogre2 + LIBGL_ALWAYS_SOFTWARE=1 -> correct (all probes within ~2 mm of ground truth)
++
++         So on WSL you must export LIBGL_ALWAYS_SOFTWARE=1 before launching. The silent-garbage
++         mode is the hazard: it would poison RL training with plausible-looking constant
++         observations and never raise an error. Sanity-check /scan against a known distance
++         after any change to the render setup. -->
+     <plugin filename="ignition-gazebo-sensors-system" name="ignition::gazebo::systems::Sensors">
++      <render_engine>ogre2</render_engine>
++    </plugin>
++
++    <!-- IMU (not driven by the Sensors system; needs its own) -->
++    <plugin filename="ignition-gazebo-imu-system" name="ignition::gazebo::systems::Imu">
+     </plugin>
+ 
+ 
+diff --git a/pepper_robot_moveit_config/rviz/moveit.rviz b/pepper_robot_moveit_config/rviz/moveit.rviz
+index 85d0db6..e3e9d95 100644
+--- a/pepper_robot_moveit_config/rviz/moveit.rviz
++++ b/pepper_robot_moveit_config/rviz/moveit.rviz
+@@ -6,7 +6,7 @@ Panels:
+       Expanded:
+         - /MotionPlanning1/Scene Robot1
+       Splitter Ratio: 0.5
+-    Tree Height: 299
++    Tree Height: 275
+   - Class: rviz_common/Selection
+     Name: Selection
+   - Class: rviz_common/Tool Properties
+@@ -41,8 +41,6 @@ Visualization Manager:
+       MoveIt_Planning_Time: 5
+       MoveIt_Use_Cartesian_Path: false
+       MoveIt_Use_Constraint_Aware_IK: false
+-      MoveIt_Warehouse_Host: 127.0.0.1
+-      MoveIt_Warehouse_Port: 33829
+       MoveIt_Workspace:
+         Center:
+           X: 0
+@@ -450,6 +448,7 @@ Visualization Manager:
+         State Display Time: 0.1s
+         Trail Step Size: 1
+         Trajectory Topic: /display_planned_path
++        Use Sim Time: false
+       Planning Metrics:
+         Payload: 1
+         Show Joint Torques: false
+@@ -957,14 +956,14 @@ Visualization Manager:
+ Window Geometry:
+   Displays:
+     collapsed: false
+-  Height: 1376
++  Height: 1291
+   Hide Left Dock: false
+   Hide Right Dock: false
+   MotionPlanning:
+     collapsed: false
+   MotionPlanning - Trajectory Slider:
+     collapsed: false
+-  QMainWindow State: 000000ff00000000fd0000000100000000000002b40000050afc020000000afb000000100044006900730070006c006100790073010000003b00000166000000c700fffffffb0000000a005600690065007700730000000127000000b9000000a000fffffffb0000001e0054006f006f006c002000500072006f00700065007200740069006500730000000150000001300000005c00fffffffb000000280020002d0020005400720061006a006500630074006f0072007900200053006c00690064006500720000000000ffffffff0000000000000000fb000000280020002d0020005400720061006a006500630074006f0072007900200053006c00690064006500720000000000ffffffff0000000000000000fb00000044004d006f00740069006f006e0050006c0061006e006e0069006e00670020002d0020005400720061006a006500630074006f0072007900200053006c00690064006500720000000000ffffffff0000003f00fffffffb0000001c004d006f00740069006f006e0050006c0061006e006e0069006e006701000001a7000002430000016900fffffffb0000003c005400720061006a006500630074006f007200790020002d0020005400720061006a006500630074006f0072007900200053006c00690064006500720000000000ffffffff0000000000000000fb0000001200530065006c0065006300740069006f006e01000003f0000000f90000005c00fffffffb0000000800540069006d006501000004ef000000560000003700ffffff00000a6c0000050a00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
++  QMainWindow State: 000000ff00000000fd0000000100000000000002b4000004b5fc020000000afb000000100044006900730070006c006100790073010000003b0000014e000000c700fffffffb0000000a005600690065007700730000000127000000b9000000a000fffffffb0000001e0054006f006f006c002000500072006f00700065007200740069006500730000000150000001300000005c00fffffffb000000280020002d0020005400720061006a006500630074006f0072007900200053006c00690064006500720000000000ffffffff0000000000000000fb000000280020002d0020005400720061006a006500630074006f0072007900200053006c00690064006500720000000000ffffffff0000000000000000fb00000044004d006f00740069006f006e0050006c0061006e006e0069006e00670020002d0020005400720061006a006500630074006f0072007900200053006c00690064006500720000000000ffffffff0000003f00fffffffb0000001c004d006f00740069006f006e0050006c0061006e006e0069006e0067010000018f0000021c0000016900fffffffb0000003c005400720061006a006500630074006f007200790020002d0020005400720061006a006500630074006f0072007900200053006c00690064006500720000000000ffffffff0000000000000000fb0000001200530065006c0065006300740069006f006e01000003b1000000e90000005c00fffffffb0000000800540069006d006501000004a0000000500000003700ffffff00000a6c000004b500000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+   Selection:
+     collapsed: false
+   Time:
+@@ -974,5 +973,5 @@ Window Geometry:
+   Views:
+     collapsed: false
+   Width: 3366
+-  X: 74
+-  Y: 27
+\ No newline at end of file
++  X: -819
++  Y: 192
+-- 
+2.34.1
+
+
+From 19552d6912a7835be503891c7d7e04d4c00864f5 Mon Sep 17 00:00:00 2001
+From: Jaishil-Patel <jaishilpatel1105@gmail.com>
+Date: Fri, 11 Sep 2026 09:50:41 +0200
+Subject: [PATCH 2/7] Add per-sensor switches, a spawn pose, and
+ headless/no-MoveIt launch options
+
+All four exist for the RL navigation task (proposal Task 4).
+
+Per-sensor switches (sensor_depth_camera, sensor_front_lidar, sensor_imu, each gated
+by the existing `sensors`). `sensors` was all-or-nothing, which made "what does the
+depth camera actually cost?" unanswerable: under LIBGL_ALWAYS_SOFTWARE=1 every
+rendered sensor is CPU-rasterised and the cost is dominated by the 320x240 depth
+camera, not the 15-ray lidar. Turning depth off alone is also the mechanism for the
+lidar-only fallback, which deviates from the depth-based modality S4.4.2 fixes and so
+has to be an explicit, visible choice rather than a side effect.
+
+Spawn pose (spawn_x/y/z/yaw -> `create -x -y -z -Y`). mesh_import.py's
+--origin-mode floor-min-corner puts the world origin in a room corner, so the default
+(0,0) spawn wedges Pepper into two walls and she tips over. The corner origin is the
+right convention for mapping real poses onto simulated ones; the spawn pose is what
+should move, and until now it could not.
+
+headless (Ignition `-s`, server only) and enable_moveit. Training does not want a GUI,
+and a throughput measurement taken with one attached measures the GUI. move_group
+plans for the arms while the navigation task drives the base, so on six cores it is
+pure contention for the cores the software-rendered camera needs.
+
+Also fixes a latent trap while editing: XML comments may not contain a double hyphen,
+and the prose style used throughout this project's docs is full of them.
+---
+ pepper_robot/launch/gz.launch.py              | 104 +++++++++++++++++-
+ .../urdf/pepper_robot.urdf.xacro              |  27 ++++-
+ 2 files changed, 125 insertions(+), 6 deletions(-)
+
+diff --git a/pepper_robot/launch/gz.launch.py b/pepper_robot/launch/gz.launch.py
+index c031b59..dfc50a8 100644
+--- a/pepper_robot/launch/gz.launch.py
++++ b/pepper_robot/launch/gz.launch.py
+@@ -19,6 +19,7 @@ from launch.substitutions import (
+     FindExecutable,
+     LaunchConfiguration,
+     PathJoinSubstitution,
++    PythonExpression,
+ )
+ from launch_ros.actions import Node
+ from launch_ros.substitutions import FindPackageShare
+@@ -37,12 +38,21 @@ def generate_launch_description() -> LaunchDescription:
+     prefix = LaunchConfiguration("prefix")
+     collision = LaunchConfiguration("collision")
+     sensors = LaunchConfiguration("sensors")
++    sensor_depth_camera = LaunchConfiguration("sensor_depth_camera")
++    sensor_front_lidar = LaunchConfiguration("sensor_front_lidar")
++    sensor_imu = LaunchConfiguration("sensor_imu")
++    spawn_x = LaunchConfiguration("spawn_x")
++    spawn_y = LaunchConfiguration("spawn_y")
++    spawn_z = LaunchConfiguration("spawn_z")
++    spawn_yaw = LaunchConfiguration("spawn_yaw")
+     ros2_control_command_interface = LaunchConfiguration(
+         "ros2_control_command_interface"
+     )
+     mimic_finger_joints = LaunchConfiguration("mimic_finger_joints")
+     gazebo_preserve_fixed_joint = LaunchConfiguration("gazebo_preserve_fixed_joint")
+     enable_rviz = LaunchConfiguration("enable_rviz")
++    headless = LaunchConfiguration("headless")
++    enable_moveit = LaunchConfiguration("enable_moveit")
+     rviz_config = LaunchConfiguration("rviz_config")
+     use_sim_time = LaunchConfiguration("use_sim_time")
+     ign_verbosity = LaunchConfiguration("ign_verbosity")
+@@ -60,6 +70,9 @@ def generate_launch_description() -> LaunchDescription:
+             ["prefix:=", prefix],
+             ["collision:=", collision],
+             ["sensors:=", sensors],
++            ["sensor_depth_camera:=", sensor_depth_camera],
++            ["sensor_front_lidar:=", sensor_front_lidar],
++            ["sensor_imu:=", sensor_imu],
+             ["ros2_control:=", "true"],
+             ["ros2_control_plugin:=", "ign"],
+             ["ros2_control_command_interface:=", ros2_control_command_interface],
+@@ -88,12 +101,32 @@ def generate_launch_description() -> LaunchDescription:
+                             )
+                         ),
+                         launch_arguments=[
+-                            ("ign_args", [world, " -r -v ", ign_verbosity])
++                            (
++                                "ign_args",
++                                [
++                                    # `-s` is server-only: no GUI, no render window.
++                                    # Training and benchmarking both want this -- an
++                                    # RTF measured with the GUI attached is measuring
++                                    # the GUI.
++                                    PythonExpression(
++                                        ["'-s ' if '", headless, "'.lower() in "
++                                         "('true','1') else ''"]
++                                    ),
++                                    world,
++                                    " -r -v ",
++                                    ign_verbosity,
++                                ],
++                            )
+                         ],
+                     ),
+-                    # Launch move_group of MoveIt 2
++                    # Launch move_group of MoveIt 2.
++                    # Conditional: MoveIt plans for the arms, and the navigation task
++                    # drives the base. On a 6-core box running a CPU-rasterised depth
++                    # camera, move_group and RViz are pure contention for the cores the
++                    # simulation needs.
+                     IncludeLaunchDescription(
+-                        PythonLaunchDescriptionSource(
++                        condition=IfCondition(enable_moveit),
++                        launch_description_source=PythonLaunchDescriptionSource(
+                             PathJoinSubstitution(
+                                 [
+                                     FindPackageShare("pepper_robot_moveit_config"),
+@@ -144,6 +177,16 @@ def generate_launch_description() -> LaunchDescription:
+                                     sdf_model_filepath,
+                                 ]
+                             ),
++                            # Spawn pose. `mesh_import.py --origin-mode floor-min-corner`
++                            # puts the world origin in a room corner -- the right
++                            # convention for mapping real poses onto simulated ones, and
++                            # the wrong place to start from: the default (0,0) spawn
++                            # wedges Pepper into two walls and she tips over. The corner
++                            # origin stays; the spawn pose moves.
++                            "-x", spawn_x,
++                            "-y", spawn_y,
++                            "-z", spawn_z,
++                            "-Y", spawn_yaw,
+                             "--ros-args",
+                             "--log-level",
+                             log_level,
+@@ -202,6 +245,28 @@ def generate_declared_arguments() -> List[DeclareLaunchArgument]:
+             default_value="true",
+             description="Flag to enable spawning of the robot.",
+         ),
++        # Where to spawn. See the comment on the `create` arguments above.
++        DeclareLaunchArgument(
++            "spawn_x",
++            default_value="0.0",
++            description="X of the robot's spawn pose, in world coordinates (metres).",
++        ),
++        DeclareLaunchArgument(
++            "spawn_y",
++            default_value="0.0",
++            description="Y of the robot's spawn pose, in world coordinates (metres).",
++        ),
++        DeclareLaunchArgument(
++            "spawn_z",
++            default_value="0.0",
++            description="Z of the robot's spawn pose (metres). The wheels sit at the "
++            "model origin, so 0.0 is floor level for a floor-aligned room.",
++        ),
++        DeclareLaunchArgument(
++            "spawn_yaw",
++            default_value="0.0",
++            description="Yaw of the robot's spawn pose (radians).",
++        ),
+         # Naming of the robot
+         DeclareLaunchArgument(
+             "name",
+@@ -225,6 +290,26 @@ def generate_declared_arguments() -> List[DeclareLaunchArgument]:
+             default_value="true",
+             description="Flag to enable the simulated depth camera, front lidar and torso IMU. Set false for a faster GUI when only motion is needed, which also avoids the ogre2 depth-camera crash under hardware GL on WSL2.",
+         ),
++        # Per-sensor switches, gated by `sensors`. The depth camera dominates the cost of
++        # software rendering, so being able to drop it alone -- keeping the lidar -- is
++        # what makes "what does depth actually cost?" a measurable question rather than a
++        # guess. Also the mechanism for a lidar-only observation modality, which is a
++        # deviation from proposal S4.4.2 and must be declared if it is ever trained on.
++        DeclareLaunchArgument(
++            "sensor_depth_camera",
++            default_value="true",
++            description="Flag to enable the simulated depth camera. Ignored when `sensors` is false.",
++        ),
++        DeclareLaunchArgument(
++            "sensor_front_lidar",
++            default_value="true",
++            description="Flag to enable the simulated front lidar. Ignored when `sensors` is false.",
++        ),
++        DeclareLaunchArgument(
++            "sensor_imu",
++            default_value="true",
++            description="Flag to enable the simulated torso IMU. Ignored when `sensors` is false.",
++        ),
+         # ROS 2 control
+         DeclareLaunchArgument(
+             "ros2_control_command_interface",
+@@ -249,6 +334,19 @@ def generate_declared_arguments() -> List[DeclareLaunchArgument]:
+             default_value="true",
+             description="Flag to enable RViz2. Set false on WSL2 if RViz segfaults — its death otherwise tears down the whole launch, Gazebo included.",
+         ),
++        DeclareLaunchArgument(
++            "headless",
++            default_value="false",
++            description="Run Ignition server-only, with no GUI. Required for RL training "
++            "and for any throughput measurement.",
++        ),
++        DeclareLaunchArgument(
++            "enable_moveit",
++            default_value="true",
++            description="Launch move_group. Set false for navigation work: MoveIt plans "
++            "for the arms, and on a 6-core machine it competes for the cores the "
++            "software-rendered depth camera needs.",
++        ),
+         DeclareLaunchArgument(
+             "rviz_config",
+             default_value=path.join(
+diff --git a/pepper_robot_description/urdf/pepper_robot.urdf.xacro b/pepper_robot_description/urdf/pepper_robot.urdf.xacro
+index afd9ee2..9636d1a 100644
+--- a/pepper_robot_description/urdf/pepper_robot.urdf.xacro
++++ b/pepper_robot_description/urdf/pepper_robot.urdf.xacro
+@@ -34,6 +34,21 @@
+        <sensor> elements, so without these the robot publishes no observations. -->
+   <xacro:arg name="sensors" default="true" />
+ 
++  <!-- Per-sensor switches, gated by `sensors` above, so `sensors:=false` still turns
++       everything off. These exist because under LIBGL_ALWAYS_SOFTWARE=1 the rendered
++       sensors are CPU-rasterised and their cost is dominated by the depth camera rather
++       than the 15-ray lidar. Being able to drop the depth camera alone is what makes
++       "what does depth actually cost?" a question answerable by measurement, before the
++       RL task commits to a control rate.
++       They are also the mechanism for a lidar-only observation modality, which is the
++       documented fallback if depth throughput proves too low to train on. Note that
++       turning the depth camera off deviates from the depth-based modality fixed by
++       proposal S4.4.2: use it for benchmarking, and if a training run ever uses it, say
++       so in the write-up. -->
++  <xacro:arg name="sensor_depth_camera" default="true" />
++  <xacro:arg name="sensor_front_lidar" default="true" />
++  <xacro:arg name="sensor_imu" default="true" />
++
+   <!--       -->
+   <!-- Robot -->
+   <!--       -->
+@@ -75,8 +90,14 @@
+ 
+   <!-- Gazebo - Simulated sensors -->
+   <xacro:if value="$(arg sensors)">
+-    <xacro:ign_depth_camera />
+-    <xacro:ign_front_lidar />
+-    <xacro:ign_imu />
++    <xacro:if value="$(arg sensor_depth_camera)">
++      <xacro:ign_depth_camera />
++    </xacro:if>
++    <xacro:if value="$(arg sensor_front_lidar)">
++      <xacro:ign_front_lidar />
++    </xacro:if>
++    <xacro:if value="$(arg sensor_imu)">
++      <xacro:ign_imu />
++    </xacro:if>
+   </xacro:if>
+ </robot>
+-- 
+2.34.1
+
+
+From ad369e1a95c0793244bfbc74eda6124afff8427f Mon Sep 17 00:00:00 2001
+From: Jaishil-Patel <jaishilpatel1105@gmail.com>
+Date: Fri, 11 Sep 2026 10:55:48 +0200
+Subject: [PATCH 3/7] Launch a robot_state_publisher when move_group is not
+ launching one
+
+enable_moveit:=false, added in the previous commit, wedged the simulator on its own.
+robot_state_publisher lives inside move_group.launch.py, and gz_ros2_control blocks in
+its Configure waiting for that node's /robot_state_publisher/get_parameters service.
+Blocking there blocks the whole simulation loop, so the world advertised
+/world/<w>/stats and then never stepped: `ign topic -e` on it hung forever, the robot
+never finished spawning, and the only symptom was "robot_state_publisher service not
+available, waiting again..." repeating at 2 Hz.
+
+The xacro arguments are deliberately the same ones move_group.launch.py passes, so the
+robot description is identical whichever path launches it. A description that differed
+between them would put a difference into the experiment that has nothing to do with
+geometry, which is the one thing S4.4.2 requires the branches to differ by.
+---
+ pepper_robot/launch/gz.launch.py              | 54 ++++++++++++++++++-
+ .../pepper_robot/model.sdf                    | 53 ++++++++++++++++++
+ 2 files changed, 106 insertions(+), 1 deletion(-)
+
+diff --git a/pepper_robot/launch/gz.launch.py b/pepper_robot/launch/gz.launch.py
+index dfc50a8..8b0c650 100644
+--- a/pepper_robot/launch/gz.launch.py
++++ b/pepper_robot/launch/gz.launch.py
+@@ -12,16 +12,18 @@ from launch.actions import (
+     IncludeLaunchDescription,
+     RegisterEventHandler,
+ )
+-from launch.conditions import IfCondition
++from launch.conditions import IfCondition, UnlessCondition
+ from launch.event_handlers import OnProcessExit
+ from launch.launch_description_sources import PythonLaunchDescriptionSource
+ from launch.substitutions import (
++    Command,
+     FindExecutable,
+     LaunchConfiguration,
+     PathJoinSubstitution,
+     PythonExpression,
+ )
+ from launch_ros.actions import Node
++from launch_ros.parameter_descriptions import ParameterValue
+ from launch_ros.substitutions import FindPackageShare
+ 
+ 
+@@ -53,6 +55,7 @@ def generate_launch_description() -> LaunchDescription:
+     enable_rviz = LaunchConfiguration("enable_rviz")
+     headless = LaunchConfiguration("headless")
+     enable_moveit = LaunchConfiguration("enable_moveit")
++    description_filepath = LaunchConfiguration("description_filepath")
+     rviz_config = LaunchConfiguration("rviz_config")
+     use_sim_time = LaunchConfiguration("use_sim_time")
+     ign_verbosity = LaunchConfiguration("ign_verbosity")
+@@ -158,8 +161,50 @@ def generate_launch_description() -> LaunchDescription:
+         ),
+     ]
+ 
++    # robot_state_publisher, but ONLY when move_group is not launching one.
++    #
++    # This is not a convenience. robot_state_publisher lives inside move_group.launch.py,
++    # and gz_ros2_control blocks in its Configure waiting for that node's
++    # /robot_state_publisher/get_parameters service. Blocking there blocks the whole
++    # simulation loop, so with enable_moveit:=false and no replacement the world advertises
++    # /world/<w>/stats and then never steps: `ign topic -e` on it hangs forever, the robot
++    # never finishes spawning, and the only symptom is a log line repeating
++    # "robot_state_publisher service not available, waiting again..." at 2 Hz.
++    #
++    # The xacro arguments below are deliberately the same ones move_group.launch.py passes,
++    # so the robot description is identical whichever path launches it. A description that
++    # differed between the two would put a difference into the experiment that has nothing
++    # to do with geometry.
++    robot_description = {
++        "robot_description": ParameterValue(
++            Command([
++                PathJoinSubstitution([FindExecutable(name="xacro")]), " ",
++                PathJoinSubstitution([
++                    FindPackageShare(description_package), description_filepath]), " ",
++                "name:=", name, " ",
++                "prefix:=", prefix, " ",
++                "ros2_control:=", "true", " ",
++                "ros2_control_plugin:=", "ign", " ",
++                "ros2_control_command_interface:=", ros2_control_command_interface,
++            ]),
++            value_type=str,
++        )
++    }
++
+     # List of nodes to be launched
+     nodes = [
++        Node(
++            package="robot_state_publisher",
++            executable="robot_state_publisher",
++            output="log",
++            condition=UnlessCondition(enable_moveit),
++            arguments=["--ros-args", "--log-level", log_level],
++            parameters=[
++                robot_description,
++                {"publish_frequency": 100.0, "frame_prefix": "",
++                 "use_sim_time": use_sim_time},
++            ],
++        ),
+         # ros_ign_gazebo_create
+         RegisterEventHandler(
+             OnProcessExit(
+@@ -229,6 +274,13 @@ def generate_declared_arguments() -> List[DeclareLaunchArgument]:
+             default_value="pepper_robot_description",
+             description="Custom package with robot description.",
+         ),
++        DeclareLaunchArgument(
++            "description_filepath",
++            default_value=path.join("urdf", "pepper_robot.urdf.xacro"),
++            description="Path to the xacro/URDF description, relative to share of "
++            "`description_package`. Used for robot_state_publisher when move_group is "
++            "not launching one; the default matches move_group.launch.py's.",
++        ),
+         DeclareLaunchArgument(
+             "sdf_model_filepath",
+             default_value=path.join("pepper_robot", "model.sdf"),
+diff --git a/pepper_robot_description/pepper_robot/model.sdf b/pepper_robot_description/pepper_robot/model.sdf
+index 5de99e2..3c608c0 100644
+--- a/pepper_robot_description/pepper_robot/model.sdf
++++ b/pepper_robot_description/pepper_robot/model.sdf
+@@ -44,6 +44,12 @@
+       </visual>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
++      <sensor name='imu_torso' type='imu'>
++        <topic>imu</topic>
++        <update_rate>100</update_rate>
++        <always_on>true</always_on>
++        <pose>0.00204 -0.03491 0.81041 0 -0 0</pose>
++      </sensor>
+     </link>
+     <joint name='HeadYaw' type='revolute'>
+       <pose relative_to='base_link'>-0.038 0 0.9899 0 0 0</pose>
+@@ -172,6 +178,25 @@
+       </visual>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
++      <sensor name='camera_depth' type='depth_camera'>
++        <topic>depth_camera</topic>
++        <update_rate>15</update_rate>
++        <always_on>true</always_on>
++        <visualize>false</visualize>
++        <pose>0.05138 0.039 0.1194 0 0 0</pose>
++        <camera>
++          <horizontal_fov>1.0123</horizontal_fov>
++          <image>
++            <width>320</width>
++            <height>240</height>
++            <format>R_FLOAT32</format>
++          </image>
++          <clip>
++            <near>0.40000000000000002</near>
++            <far>8</far>
++          </clip>
++        </camera>
++      </sensor>
+     </link>
+     <joint name='HipRoll' type='revolute'>
+       <pose relative_to='base_link'>2e-05 0 0.6809999999999999 0 0 0</pose>
+@@ -364,6 +389,34 @@
+       </visual>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
++      <sensor name='front_laser' type='gpu_lidar'>
++        <topic>scan</topic>
++        <update_rate>10</update_rate>
++        <always_on>true</always_on>
++        <visualize>true</visualize>
++        <pose>0.0562 0 -0.0692 0 0.0 0</pose>
++        <lidar>
++          <scan>
++            <horizontal>
++              <samples>15</samples>
++              <resolution>1</resolution>
++              <min_angle>-0.52359999999999995</min_angle>
++              <max_angle>0.52359999999999995</max_angle>
++            </horizontal>
++            <vertical>
++              <samples>1</samples>
++              <resolution>1</resolution>
++              <min_angle>0</min_angle>
++              <max_angle>0</max_angle>
++            </vertical>
++          </scan>
++          <range>
++            <min>0.10000000000000001</min>
++            <max>3</max>
++            <resolution>0.01</resolution>
++          </range>
++        </lidar>
++      </sensor>
+     </link>
+     <joint name='WheelB' type='revolute'>
+       <pose relative_to='Tibia'>-0.17 0 -0.264 0 0 -3.14159</pose>
+-- 
+2.34.1
+
+
+From 735221a0e02aa3dda424db917b7d8297346c2fbf Mon Sep 17 00:00:00 2001
+From: Jaishil-Patel <jaishilpatel1105@gmail.com>
+Date: Sat, 12 Sep 2026 10:22:39 +0200
+Subject: [PATCH 4/7] Add a base contact sensor and its ROS 2 bridge, for real
+ collision detection
+
+C_i in Eq. 4.1 and CR in Eq. 4.5 need a collision signal, and until now nothing
+provided one: collision.source defaulted to 'contact' in rl/config/env.yaml with no
+contact sensor anywhere in the model, so the env refused to start. Adds
+ign_base_contact (type="contact", on Tibia_collision -- the mobile base's own
+collision element in the generated model.sdf), gated by its own sensor_contact switch
+so `sensors:=false` still turns everything off, mirroring the depth/lidar/imu pattern.
+
+Bridged as `contacts` in bridge.launch.py (ignition.msgs.Contacts ->
+ros_ign_interfaces/msg/Contacts, IGN default /bumper, ROS default
+/pepper_robot/bumper), matching rl.sim_process.BUMPER_TOPIC and
+RosInterface.CONTACT_TOPIC exactly -- the same identifier is now the single source of
+truth across the launch files and the env.
+
+Also caught two things while wiring this up, both from getting collision detection
+verified rather than assumed:
+  - XML comments may not contain a double hyphen; the prose style throughout this
+    project's docs is full of them, and this is the second time it has bitten an edit
+    to this file.
+  - ros_ign_bridge's Contacts conversion was already present in the vendored ros_ign
+    checkout (ros_ign_interfaces/msg/Contact{,s}.msg, convert/ros_ign_interfaces.cpp),
+    so no change was needed there -- confirmed by inspection before wiring the bridge
+    entry, not assumed.
+---
+ pepper_robot/launch/gz.launch.py              | 10 +++++++
+ .../pepper_robot/model.sdf                    |  9 ++++++
+ .../urdf/pepper_robot.gazebo                  | 28 +++++++++++++++++++
+ .../urdf/pepper_robot.urdf.xacro              |  4 +++
+ pepper_robot_ign/launch/bridge.launch.py      | 26 +++++++++++++++++
+ 5 files changed, 77 insertions(+)
+
+diff --git a/pepper_robot/launch/gz.launch.py b/pepper_robot/launch/gz.launch.py
+index 8b0c650..c502b23 100644
+--- a/pepper_robot/launch/gz.launch.py
++++ b/pepper_robot/launch/gz.launch.py
+@@ -43,6 +43,7 @@ def generate_launch_description() -> LaunchDescription:
+     sensor_depth_camera = LaunchConfiguration("sensor_depth_camera")
+     sensor_front_lidar = LaunchConfiguration("sensor_front_lidar")
+     sensor_imu = LaunchConfiguration("sensor_imu")
++    sensor_contact = LaunchConfiguration("sensor_contact")
+     spawn_x = LaunchConfiguration("spawn_x")
+     spawn_y = LaunchConfiguration("spawn_y")
+     spawn_z = LaunchConfiguration("spawn_z")
+@@ -76,6 +77,7 @@ def generate_launch_description() -> LaunchDescription:
+             ["sensor_depth_camera:=", sensor_depth_camera],
+             ["sensor_front_lidar:=", sensor_front_lidar],
+             ["sensor_imu:=", sensor_imu],
++            ["sensor_contact:=", sensor_contact],
+             ["ros2_control:=", "true"],
+             ["ros2_control_plugin:=", "ign"],
+             ["ros2_control_command_interface:=", ros2_control_command_interface],
+@@ -362,6 +364,14 @@ def generate_declared_arguments() -> List[DeclareLaunchArgument]:
+             default_value="true",
+             description="Flag to enable the simulated torso IMU. Ignored when `sensors` is false.",
+         ),
++        DeclareLaunchArgument(
++            "sensor_contact",
++            default_value="true",
++            description="Flag to enable the base contact sensor. Ignored when `sensors` "
++            "is false. This is the collision ground truth for Eq. 4.1 and Eq. 4.5 -- it "
++            "must be identical in both branches, so this default should not be changed "
++            "per-branch.",
++        ),
+         # ROS 2 control
+         DeclareLaunchArgument(
+             "ros2_control_command_interface",
+diff --git a/pepper_robot_description/pepper_robot/model.sdf b/pepper_robot_description/pepper_robot/model.sdf
+index 3c608c0..7aa88b0 100644
+--- a/pepper_robot_description/pepper_robot/model.sdf
++++ b/pepper_robot_description/pepper_robot/model.sdf
+@@ -417,6 +417,15 @@
+           </range>
+         </lidar>
+       </sensor>
++      <sensor name='base_contact' type='contact'>
++        <topic>bumper</topic>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>Tibia_collision</collision>
++          <topic>__default_topic__</topic>
++        </contact>
++      </sensor>
+     </link>
+     <joint name='WheelB' type='revolute'>
+       <pose relative_to='Tibia'>-0.17 0 -0.264 0 0 -3.14159</pose>
+diff --git a/pepper_robot_description/urdf/pepper_robot.gazebo b/pepper_robot_description/urdf/pepper_robot.gazebo
+index 7abc517..7f960f4 100644
+--- a/pepper_robot_description/urdf/pepper_robot.gazebo
++++ b/pepper_robot_description/urdf/pepper_robot.gazebo
+@@ -152,6 +152,34 @@
+   <!--        -->
+   <!-- Torso IMU, mirroring ImuTorsoGyrometer_frame. Requires the world to load
+        ignition::gazebo::systems::Imu; the Sensors system alone does not drive IMUs. -->
++  <!-- Base contact sensor. This is the collision ground truth for C_i in Eq. 4.1 and the
++       numerator of CR in Eq. 4.5, so it is an experimental instrument rather than a
++       convenience, and it must be present and identical in BOTH branches.
++
++       Mounted on Tibia, which is Pepper's mobile base: the generated model.sdf gives it
++       Tibia_collision, and for a navigation task the base is what strikes things. The
++       collision element has to be named explicitly, which is why the lumped SDF name
++       appears here rather than the URDF link name.
++
++       Requires ignition-gazebo-contact-system in the world. tools/gen_world.py puts it in
++       the shared WORLD_TEMPLATE, so both branches get it from one place; adding it to one
++       generated world instead would make gen_world.py fail its own difference check,
++       correctly. -->
++  <xacro:macro name="ign_base_contact" params="
++   topic:=bumper
++">
++    <gazebo reference="Tibia">
++      <sensor name="base_contact" type="contact">
++        <topic>${topic}</topic>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>Tibia_collision</collision>
++        </contact>
++      </sensor>
++    </gazebo>
++  </xacro:macro>
++
+   <xacro:macro name="ign_imu" params="
+    topic:=imu
+    update_rate:=100
+diff --git a/pepper_robot_description/urdf/pepper_robot.urdf.xacro b/pepper_robot_description/urdf/pepper_robot.urdf.xacro
+index 9636d1a..f58663c 100644
+--- a/pepper_robot_description/urdf/pepper_robot.urdf.xacro
++++ b/pepper_robot_description/urdf/pepper_robot.urdf.xacro
+@@ -48,6 +48,7 @@
+   <xacro:arg name="sensor_depth_camera" default="true" />
+   <xacro:arg name="sensor_front_lidar" default="true" />
+   <xacro:arg name="sensor_imu" default="true" />
++  <xacro:arg name="sensor_contact" default="true" />
+ 
+   <!--       -->
+   <!-- Robot -->
+@@ -99,5 +100,8 @@
+     <xacro:if value="$(arg sensor_imu)">
+       <xacro:ign_imu />
+     </xacro:if>
++    <xacro:if value="$(arg sensor_contact)">
++      <xacro:ign_base_contact />
++    </xacro:if>
+   </xacro:if>
+ </robot>
+diff --git a/pepper_robot_ign/launch/bridge.launch.py b/pepper_robot_ign/launch/bridge.launch.py
+index 31e08cf..b131808 100644
+--- a/pepper_robot_ign/launch/bridge.launch.py
++++ b/pepper_robot_ign/launch/bridge.launch.py
+@@ -46,6 +46,11 @@ bridges = {
+     ),
+     "scan": ("sensor_msgs/msg/LaserScan" + DIR_IGN_TO_ROS2 + "ignition.msgs.LaserScan"),
+     "imu": ("sensor_msgs/msg/Imu" + DIR_IGN_TO_ROS2 + "ignition.msgs.IMU"),
++    # Collision ground truth for Eq. 4.1 (C_i) and Eq. 4.5 (CR). See ign_base_contact in
++    # pepper_robot.gazebo -- must be present and identical in both branches.
++    "contacts": (
++        "ros_ign_interfaces/msg/Contacts" + DIR_IGN_TO_ROS2 + "ignition.msgs.Contacts"
++    ),
+ }
+ 
+ 
+@@ -73,6 +78,7 @@ def generate_launch_description():
+         "depth_points": LaunchConfiguration("bridge_depth_points"),
+         "scan": LaunchConfiguration("bridge_scan"),
+         "imu": LaunchConfiguration("bridge_imu"),
++        "contacts": LaunchConfiguration("bridge_contacts"),
+     }
+     ign_topic = {
+         "clock": LaunchConfiguration("ign_clock"),
+@@ -90,6 +96,7 @@ def generate_launch_description():
+         "depth_points": LaunchConfiguration("ign_depth_points"),
+         "scan": LaunchConfiguration("ign_scan"),
+         "imu": LaunchConfiguration("ign_imu"),
++        "contacts": LaunchConfiguration("ign_contacts"),
+     }
+     ros_topic = {
+         "clock": LaunchConfiguration("ros_clock"),
+@@ -107,6 +114,7 @@ def generate_launch_description():
+         "depth_points": LaunchConfiguration("ros_depth_points"),
+         "scan": LaunchConfiguration("ros_scan"),
+         "imu": LaunchConfiguration("ros_imu"),
++        "contacts": LaunchConfiguration("ros_contacts"),
+     }
+     use_sim_time = LaunchConfiguration("use_sim_time")
+     log_level = LaunchConfiguration("log_level")
+@@ -298,6 +306,12 @@ def generate_declared_arguments() -> List[DeclareLaunchArgument]:
+             default_value="true",
+             description="Flag to enable bridging of `imu` (IGN -> ROS 2).",
+         ),
++        DeclareLaunchArgument(
++            "bridge_contacts",
++            default_value="true",
++            description="Flag to enable bridging of `contacts` (IGN -> ROS 2). This is "
++            "the collision ground truth Eq. 4.1 and Eq. 4.5 are computed from.",
++        ),
+         # Source topic names
+         DeclareLaunchArgument(
+             "ign_clock",
+@@ -380,6 +394,12 @@ def generate_declared_arguments() -> List[DeclareLaunchArgument]:
+             default_value="/imu",
+             description="Ignition topic for `imu`.",
+         ),
++        DeclareLaunchArgument(
++            "ign_contacts",
++            default_value="/bumper",
++            description="Ignition topic for `contacts`. Matches the default `topic:=bumper` "
++            "of ign_base_contact in pepper_robot.gazebo.",
++        ),
+         # ROS topic names
+         DeclareLaunchArgument(
+             "ros_clock", default_value="/clock", description="ROS 2 topic for `clock`."
+@@ -458,6 +478,12 @@ def generate_declared_arguments() -> List[DeclareLaunchArgument]:
+             default_value=["/", LaunchConfiguration("robot_name"), "/imu"],
+             description="ROS 2 topic for `imu`.",
+         ),
++        DeclareLaunchArgument(
++            "ros_contacts",
++            default_value=["/", LaunchConfiguration("robot_name"), "/bumper"],
++            description="ROS 2 topic for `contacts`. rl/sim_process.BUMPER_TOPIC and "
++            "rl/env/pepper_nav_env.RosInterface.CONTACT_TOPIC must agree with this.",
++        ),
+         # Miscellaneous
+         DeclareLaunchArgument(
+             "use_sim_time",
+-- 
+2.34.1
+
+
+From b1a15b00437d2348d81c8f7a376f8eb833a71d58 Mon Sep 17 00:00:00 2001
+From: Jaishil-Patel <jaishilpatel1105@gmail.com>
+Date: Thu, 1 Oct 2026 18:32:28 +0200
+Subject: [PATCH 5/7] Make the simulated base drivable and the whole body
+ collision-sensed
+
+The base could not drive, the joints were limp and the posture was wrong, so the
+simulated Pepper did not match the real one. Measured and fixed 28 Sep - 1 Oct 2026.
+
+Drivetrain (pepper_drive_wheels.xacro, ign_virtual_diff_drive):
+- DiffDrive on two of the three 120-degree omni wheels made them fight; a forward
+  command drove her 0.2 m backwards and tipped her. Two virtual coaxial drive wheels
+  (r 0.072, 0.31 m apart) now sit at the base centre and carry the traction; the real
+  wheels are frictionless supports, so the support polygon is the real robot's.
+  Tracking 84-99% (straight, slow, reverse, spins, arcs), tilt <= 3.5 deg.
+- Rejected and recorded in the xacro: VelocityControl (tips over), larger wheels,
+  centreline casters (tips in arcs), a sprung axle (DART lets the light wheel link sink
+  and lose grip), and a tripod (CoM only 9 mm behind the axle).
+
+Controllers and posture:
+- With enable_moveit:=false no ros2_control controller was ever spawned, so every
+  joint was limp. gz.launch.py now spawns the controllers listed in
+  moveit_controller_manager.yaml plus joint_state_broadcaster.
+- ign_ros2_control ignores <param name="initial_position">; added initial_value on
+  the position state interface of 45 joints, so head and arms start in the real pose.
+
+Collision sensing:
+- Contact sensors on 16 links: base shell, torso, hip, pelvis, neck, head, shoulders,
+  biceps, elbows, forearms and hands. The base alone missed side-on bumps, and the
+  hip/pelvis gap let Pepper wedge under a legless scanned chair seat uncounted.
+---
+ pepper_robot/launch/gz.launch.py              |  32 +++
+ .../pepper_robot/model.sdf                    | 240 +++++++++++++++++-
+ .../urdf/pepper_drive_wheels.xacro            |  61 +++++
+ .../urdf/pepper_robot.gazebo                  | 117 ++++++++-
+ .../urdf/pepper_robot.ros2_control            | 225 ++++++++++++----
+ .../urdf/pepper_robot.urdf.xacro              |   3 +-
+ 6 files changed, 612 insertions(+), 66 deletions(-)
+ create mode 100644 pepper_robot_description/urdf/pepper_drive_wheels.xacro
+
+diff --git a/pepper_robot/launch/gz.launch.py b/pepper_robot/launch/gz.launch.py
+index c502b23..279628c 100644
+--- a/pepper_robot/launch/gz.launch.py
++++ b/pepper_robot/launch/gz.launch.py
+@@ -25,6 +25,7 @@ from launch.substitutions import (
+ from launch_ros.actions import Node
+ from launch_ros.parameter_descriptions import ParameterValue
+ from launch_ros.substitutions import FindPackageShare
++import yaml
+ 
+ 
+ def generate_launch_description() -> LaunchDescription:
+@@ -241,6 +242,28 @@ def generate_launch_description() -> LaunchDescription:
+                         parameters=[{"use_sim_time": use_sim_time}],
+                         condition=IfCondition(spawn_robot),
+                     ),
++                ] + [
++                    # ros2_control controllers, but ONLY when move_group is not spawning them.
++                    # Same trap as robot_state_publisher above: the spawners live in
++                    # move_group.launch.py, so with enable_moveit:=false NO controller was
++                    # loaded and every joint -- hips, knee, arms, head -- was limp. Found
++                    # 30 Sep 2026: `ros2 control list_controllers` -> "No controllers are
++                    # currently loaded"; Pepper's upper body sagged under any acceleration,
++                    # she fell easily and a reset teleport could not restore her posture,
++                    # and the head (= depth-camera extrinsics, HeadPitch -0.2) was not held.
++                    # The list is read from the same YAML move_group uses, so both paths
++                    # load identical controllers.
++                    Node(
++                        package="controller_manager",
++                        executable="spawner",
++                        output="log",
++                        arguments=[controller, "--controller-manager-timeout", "120",
++                                   "--ros-args", "--log-level", log_level],
++                        parameters=[{"use_sim_time": use_sim_time}],
++                        condition=UnlessCondition(enable_moveit),
++                    )
++                    for controller in _controllers_to_spawn()
++                ] + [
+                     # ros_ign_bridge (clock -> ROS 2)
+                     Node(
+                         package="ros_ign_bridge",
+@@ -264,6 +287,15 @@ def generate_launch_description() -> LaunchDescription:
+     )
+ 
+ 
++def _controllers_to_spawn() -> List[str]:
++    """Controllers move_group.launch.py spawns, plus the joint state broadcaster."""
++    cfg = path.join(get_package_share_directory("pepper_robot_moveit_config"),
++                    "config", "moveit_controller_manager.yaml")
++    with open(cfg) as f:
++        names = yaml.safe_load(f)["controller_names"]
++    return list(names) + ["joint_state_broadcaster"]
++
++
+ def generate_declared_arguments() -> List[DeclareLaunchArgument]:
+     """
+     Generate list of all launch arguments that are declared for this launch script.
+diff --git a/pepper_robot_description/pepper_robot/model.sdf b/pepper_robot_description/pepper_robot/model.sdf
+index 7aa88b0..31821f6 100644
+--- a/pepper_robot_description/pepper_robot/model.sdf
++++ b/pepper_robot_description/pepper_robot/model.sdf
+@@ -42,6 +42,14 @@
+           </mesh>
+         </geometry>
+       </visual>
++      <sensor name='torso_contact' type='contact'>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>base_link_fixed_joint_lump__torso_collision</collision>
++          <topic>__default_topic__</topic>
++        </contact>
++      </sensor>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
+       <sensor name='imu_torso' type='imu'>
+@@ -114,6 +122,14 @@
+       </visual>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
++      <sensor name='neck_contact' type='contact'>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>Neck_collision</collision>
++          <topic>__default_topic__</topic>
++        </contact>
++      </sensor>
+     </link>
+     <joint name='HeadPitch' type='revolute'>
+       <pose relative_to='Neck'>0 0 0 0 0 0</pose>
+@@ -197,6 +213,14 @@
+           </clip>
+         </camera>
+       </sensor>
++      <sensor name='head_contact' type='contact'>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>Head_collision</collision>
++          <topic>__default_topic__</topic>
++        </contact>
++      </sensor>
+     </link>
+     <joint name='HipRoll' type='revolute'>
+       <pose relative_to='base_link'>2e-05 0 0.6809999999999999 0 0 0</pose>
+@@ -261,6 +285,14 @@
+       </visual>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
++      <sensor name='hip_contact' type='contact'>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>Hip_collision</collision>
++          <topic>__default_topic__</topic>
++        </contact>
++      </sensor>
+     </link>
+     <joint name='HipPitch' type='revolute'>
+       <pose relative_to='Hip'>0 0 -0.079 0 0 0</pose>
+@@ -325,6 +357,14 @@
+       </visual>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
++      <sensor name='pelvis_contact' type='contact'>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>Pelvis_collision</collision>
++          <topic>__default_topic__</topic>
++        </contact>
++      </sensor>
+     </link>
+     <joint name='KneePitch' type='revolute'>
+       <pose relative_to='Pelvis'>0 0 -0.268 0 0 0</pose>
+@@ -418,7 +458,6 @@
+         </lidar>
+       </sensor>
+       <sensor name='base_contact' type='contact'>
+-        <topic>bumper</topic>
+         <always_on>true</always_on>
+         <update_rate>50</update_rate>
+         <contact>
+@@ -427,6 +466,108 @@
+         </contact>
+       </sensor>
+     </link>
++    <joint name='DriveL' type='revolute'>
++      <pose relative_to='Tibia'>0 0.155 -0.264 0 0 0</pose>
++      <parent>Tibia</parent>
++      <child>DriveL_link</child>
++      <axis>
++        <xyz>0 1 0</xyz>
++        <limit>
++          <lower>-10000000000000000</lower>
++          <upper>10000000000000000</upper>
++        </limit>
++        <dynamics>
++          <spring_reference>0</spring_reference>
++          <spring_stiffness>0</spring_stiffness>
++        </dynamics>
++      </axis>
++    </joint>
++    <link name='DriveL_link'>
++      <pose relative_to='DriveL'>0 0 0 0 0 0</pose>
++      <inertial>
++        <pose>0 0 0 0 0 0</pose>
++        <mass>0.20000000000000001</mass>
++        <inertia>
++          <ixx>0.00029999999999999997</ixx>
++          <ixy>0</ixy>
++          <ixz>0</ixz>
++          <iyy>0.00050000000000000001</iyy>
++          <iyz>0</iyz>
++          <izz>0.00029999999999999997</izz>
++        </inertia>
++      </inertial>
++      <collision name='DriveL_link_collision'>
++        <pose>0 0 0 1.5707963 0 0</pose>
++        <geometry>
++          <cylinder>
++            <length>0.029999999999999999</length>
++            <radius>0.071999999999999995</radius>
++          </cylinder>
++        </geometry>
++        <surface>
++          <contact>
++            <ode/>
++          </contact>
++          <friction>
++            <ode>
++              <mu>1</mu>
++              <mu2>1</mu2>
++            </ode>
++          </friction>
++        </surface>
++      </collision>
++    </link>
++    <joint name='DriveR' type='revolute'>
++      <pose relative_to='Tibia'>0 -0.155 -0.264 0 0 0</pose>
++      <parent>Tibia</parent>
++      <child>DriveR_link</child>
++      <axis>
++        <xyz>0 1 0</xyz>
++        <limit>
++          <lower>-10000000000000000</lower>
++          <upper>10000000000000000</upper>
++        </limit>
++        <dynamics>
++          <spring_reference>0</spring_reference>
++          <spring_stiffness>0</spring_stiffness>
++        </dynamics>
++      </axis>
++    </joint>
++    <link name='DriveR_link'>
++      <pose relative_to='DriveR'>0 0 0 0 0 0</pose>
++      <inertial>
++        <pose>0 0 0 0 0 0</pose>
++        <mass>0.20000000000000001</mass>
++        <inertia>
++          <ixx>0.00029999999999999997</ixx>
++          <ixy>0</ixy>
++          <ixz>0</ixz>
++          <iyy>0.00050000000000000001</iyy>
++          <iyz>0</iyz>
++          <izz>0.00029999999999999997</izz>
++        </inertia>
++      </inertial>
++      <collision name='DriveR_link_collision'>
++        <pose>0 0 0 1.5707963 0 0</pose>
++        <geometry>
++          <cylinder>
++            <length>0.029999999999999999</length>
++            <radius>0.071999999999999995</radius>
++          </cylinder>
++        </geometry>
++        <surface>
++          <contact>
++            <ode/>
++          </contact>
++          <friction>
++            <ode>
++              <mu>1</mu>
++              <mu2>1</mu2>
++            </ode>
++          </friction>
++        </surface>
++      </collision>
++    </link>
+     <joint name='WheelB' type='revolute'>
+       <pose relative_to='Tibia'>-0.17 0 -0.264 0 0 -3.14159</pose>
+       <parent>Tibia</parent>
+@@ -477,8 +618,8 @@
+           </contact>
+           <friction>
+             <ode>
+-              <mu>1</mu>
+-              <mu2>1</mu2>
++              <mu>0</mu>
++              <mu2>0</mu2>
+               <fdir1>1 0 0</fdir1>
+             </ode>
+           </friction>
+@@ -545,7 +686,7 @@
+           </contact>
+           <friction>
+             <ode>
+-              <mu>1</mu>
++              <mu>0</mu>
+               <mu2>0</mu2>
+               <fdir1>1 0 0</fdir1>
+             </ode>
+@@ -614,7 +755,7 @@
+           <friction>
+             <ode>
+               <mu>0</mu>
+-              <mu2>1</mu2>
++              <mu2>0</mu2>
+               <fdir1>0 1 0</fdir1>
+             </ode>
+           </friction>
+@@ -694,6 +835,14 @@
+       </visual>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
++      <sensor name='lshoulder_contact' type='contact'>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>LShoulder_collision</collision>
++          <topic>__default_topic__</topic>
++        </contact>
++      </sensor>
+     </link>
+     <joint name='LShoulderRoll' type='revolute'>
+       <pose relative_to='LShoulder'>0 0 0 0 0 0</pose>
+@@ -758,6 +907,14 @@
+       </visual>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
++      <sensor name='lbicep_contact' type='contact'>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>LBicep_collision</collision>
++          <topic>__default_topic__</topic>
++        </contact>
++      </sensor>
+     </link>
+     <joint name='LElbowYaw' type='revolute'>
+       <pose relative_to='LBicep'>0.1812 0.015 0.00013 0 -0.1570790000000001 0</pose>
+@@ -822,6 +979,14 @@
+       </visual>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
++      <sensor name='lelbow_contact' type='contact'>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>LElbow_collision</collision>
++          <topic>__default_topic__</topic>
++        </contact>
++      </sensor>
+     </link>
+     <joint name='LElbowRoll' type='revolute'>
+       <pose relative_to='LElbow'>0 0 0 0 0 0</pose>
+@@ -886,6 +1051,14 @@
+       </visual>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
++      <sensor name='lforearm_contact' type='contact'>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>LForeArm_collision</collision>
++          <topic>__default_topic__</topic>
++        </contact>
++      </sensor>
+     </link>
+     <joint name='LWristYaw' type='revolute'>
+       <pose relative_to='LForeArm'>0.15 0 0 0 0 0</pose>
+@@ -950,6 +1123,14 @@
+       </visual>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
++      <sensor name='lhand_contact' type='contact'>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>l_wrist_collision</collision>
++          <topic>__default_topic__</topic>
++        </contact>
++      </sensor>
+     </link>
+     <joint name='LFinger11' type='revolute'>
+       <pose relative_to='l_wrist'>0.08210000000000001 -0.0268 0.004 1.74402 1.04064 -0.03343350000000005</pose>
+@@ -1917,6 +2098,14 @@
+       </visual>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
++      <sensor name='rshoulder_contact' type='contact'>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>RShoulder_collision</collision>
++          <topic>__default_topic__</topic>
++        </contact>
++      </sensor>
+     </link>
+     <joint name='RShoulderRoll' type='revolute'>
+       <pose relative_to='RShoulder'>0 0 0 0 0 0</pose>
+@@ -1981,6 +2170,14 @@
+       </visual>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
++      <sensor name='rbicep_contact' type='contact'>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>RBicep_collision</collision>
++          <topic>__default_topic__</topic>
++        </contact>
++      </sensor>
+     </link>
+     <joint name='RElbowYaw' type='revolute'>
+       <pose relative_to='RBicep'>0.1812 -0.015 0.00013 0 -0.1570790000000001 0</pose>
+@@ -2045,6 +2242,14 @@
+       </visual>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
++      <sensor name='relbow_contact' type='contact'>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>RElbow_collision</collision>
++          <topic>__default_topic__</topic>
++        </contact>
++      </sensor>
+     </link>
+     <joint name='RElbowRoll' type='revolute'>
+       <pose relative_to='RElbow'>0 0 0 0 0 0</pose>
+@@ -2109,6 +2314,14 @@
+       </visual>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
++      <sensor name='rforearm_contact' type='contact'>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>RForeArm_collision</collision>
++          <topic>__default_topic__</topic>
++        </contact>
++      </sensor>
+     </link>
+     <joint name='RWristYaw' type='revolute'>
+       <pose relative_to='RForeArm'>0.15 0 0 0 0 0</pose>
+@@ -2173,6 +2386,14 @@
+       </visual>
+       <gravity>true</gravity>
+       <self_collide>false</self_collide>
++      <sensor name='rhand_contact' type='contact'>
++        <always_on>true</always_on>
++        <update_rate>50</update_rate>
++        <contact>
++          <collision>r_wrist_collision</collision>
++          <topic>__default_topic__</topic>
++        </contact>
++      </sensor>
+     </link>
+     <joint name='RFinger11' type='revolute'>
+       <pose relative_to='r_wrist'>0.08210000000000001 0.0268 0.004 1.39757 1.04064 0.03343349999999972</pose>
+@@ -3088,11 +3309,12 @@
+       <publish_visual_pose>false</publish_visual_pose>
+     </plugin>
+     <plugin name='ignition::gazebo::systems::DiffDrive' filename='ignition-gazebo-diff-drive-system'>
+-      <left_joint>WheelFL</left_joint>
+-      <right_joint>WheelFR</right_joint>
+-      <back_joint>WheelB</back_joint>
++      <left_joint>DriveL</left_joint>
++      <right_joint>DriveR</right_joint>
+       <wheel_separation>0.310</wheel_separation>
+-      <wheel_radius>0.07</wheel_radius>
++      <wheel_radius>0.072</wheel_radius>
++      <topic>/model/pepper_robot/cmd_vel</topic>
++      <odom_topic>/model/pepper_robot/odometry</odom_topic>
+     </plugin>
+     <frame name='Accelerometer_sensor_fixedjoint' attached_to='torso'>
+       <pose>0.00239 -0.03575 0.00626 0 -0 0</pose>
+diff --git a/pepper_robot_description/urdf/pepper_drive_wheels.xacro b/pepper_robot_description/urdf/pepper_drive_wheels.xacro
+new file mode 100644
+index 0000000..a7df1d4
+--- /dev/null
++++ b/pepper_robot_description/urdf/pepper_drive_wheels.xacro
+@@ -0,0 +1,61 @@
++<?xml version="1.0"?>
++<!-- Simulation-only drivetrain: two virtual coaxial drive wheels under the wheel base.
++
++     Pepper's three real wheels are omni wheels 120 degrees apart. Fortress has no omni-wheel
++     model, and DiffDrive on two of them made them fight (the axles are ~62 degrees apart) while
++     the third dragged: measured 30 Sep 2026, a forward command moved her 0.2 m BACKWARDS and left
++     her leaning 22 degrees; random commands tipped her past 40 degrees.
++
++     Here the three real wheels stay as frictionless supports (gazebo_misc_references), so the
++     support polygon is the real robot's, and these two wheels, on one axle along y at the base
++     centre and 0.31 m apart, carry the traction. DiffDrive drives them exactly as it expects.
++     Gravity and friction act normally. The radius is 2 mm larger than the real wheels
++     (0.072 vs 0.07) so they carry load to grip.
++
++     Measured 30 Sep 2026 on room_standard (clear course, sim-time fits): straight 0.3 m/s 82%,
++     spins 96-116%, arcs ~40-80%, max tilt 9 deg, no falls. Alternatives tried and rejected:
++       * VelocityControl (torso or wheel base): tipped over; it overwrites link velocity in the
++         link frame, so pitch becomes a climb gravity cannot correct.
++       * r=0.076, mu 2.0: straight 99% but turning ~50%, arcs 8-60%.
++       * drive wheels + two centreline casters: straight 99-101%, but the narrower support
++         polygon tipped her in gentle arcs.
++       * (1 Oct 2026) sprung drive wheels, to keep traction on the photogrammetric floor, where
++         this rigid axle hangs in the air over dips > 2 mm (~8% of poses; most smoke-test
++         timeouts there were Pepper stuck at such a spot). A prismatic DriveSusp joint between
++         Tibia and each wheel broke driving outright, even on the flat standard floor: the
++         light wheel link sank 9-18 mm into the floor (DART corrects penetration and limit
++         violation on it only ~2 mm/s), the wheels spun with no grip, and 0.2 m/s moved her
++         1 cm in 4 s. <springStiffness> is carried into the SDF but not applied to the joint;
++         a JointPositionController spring, a sphere wheel, heavier unsprung mass and the
++         support wheels' kp/kd/min_depth all failed the same way. A tripod (drive axle + back
++         wheel, front wheels raised as tip guards) was ruled out: the CoM is only 9 mm behind
++         the axle. Rigid axle kept; the uneven-floor problem is handled on the floor side.
++     Remaining tracking error is to be measured against the real robot (tools/base_sysid.py)
++     and reported, not hidden.
++     Collision only, no visual: the depth camera must not see them. -->
++<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
++  <xacro:macro name="virtual_drive_wheel" params="side y">
++    <link name="Drive${side}_link">
++      <inertial>
++        <mass value="0.2" />
++        <inertia ixx="0.0003" ixy="0" ixz="0" iyy="0.0005" iyz="0" izz="0.0003" />
++        <origin rpy="0 0 0" xyz="0 0 0" />
++      </inertial>
++      <collision>
++        <origin rpy="1.5707963 0 0" xyz="0 0 0" />
++        <geometry>
++          <cylinder radius="0.072" length="0.03" />
++        </geometry>
++      </collision>
++    </link>
++    <joint name="Drive${side}" type="continuous">
++      <parent link="Tibia" />
++      <child link="Drive${side}_link" />
++      <origin rpy="0 0 0" xyz="0.0 ${y} -0.264" />
++      <axis xyz="0 1 0" />
++    </joint>
++  </xacro:macro>
++
++  <xacro:virtual_drive_wheel side="L" y="0.155" />
++  <xacro:virtual_drive_wheel side="R" y="-0.155" />
++</robot>
+diff --git a/pepper_robot_description/urdf/pepper_robot.gazebo b/pepper_robot_description/urdf/pepper_robot.gazebo
+index 7f960f4..15e774e 100644
+--- a/pepper_robot_description/urdf/pepper_robot.gazebo
++++ b/pepper_robot_description/urdf/pepper_robot.gazebo
+@@ -35,6 +35,66 @@
+   <!--       -->
+   <!-- Macro -->
+   <!--       -->
++  <!-- Base locomotion: VelocityControl, NOT DiffDrive.
++       Pepper's three wheels sit 120 degrees apart (WheelFL yaw +1.075, WheelFR -1.075,
++       WheelB -pi); an omnidirectional base. DiffDrive assumes two wheels on one axle; driving
++       WheelFL/WheelFR as a diff pair makes them fight each other, and Fortress's DiffDrive has no
++       <back_joint>, so WheelB was dragged. Measured 30 Sep 2026 on room_standard: a 5 s forward
++       command at 0.3 m/s moved her 0.2 m BACKWARDS and left her leaning 22 degrees; random commands
++       tipped her past 40. VelocityControl applies the commanded (v, omega) to the base directly,
++       which is also how the real robot is driven (NAOqi ALMotion.move is a base velocity
++       command). The wheels are frictionless supports (see gazebo_misc_references). Same cmd_vel
++       topic as DiffDrive used, so bridge.launch.py and the RL env are unchanged. -->
++  <!-- Base locomotion actually used: DiffDrive on two virtual coaxial drive wheels. See
++       pepper_drive_wheels.xacro for the measurements behind this; the VelocityControl
++       macro below is superseded and kept only for the record. -->
++  <xacro:macro name="ign_virtual_diff_drive">
++    <gazebo>
++      <plugin filename="ignition-gazebo-diff-drive-system"
++        name="ignition::gazebo::systems::DiffDrive">
++        <left_joint>DriveL</left_joint>
++        <right_joint>DriveR</right_joint>
++        <wheel_separation>0.310</wheel_separation>
++        <wheel_radius>0.072</wheel_radius>
++        <topic>/model/pepper_robot/cmd_vel</topic>
++        <odom_topic>/model/pepper_robot/odometry</odom_topic>
++      </plugin>
++    </gazebo>
++    <gazebo reference="DriveL_link">
++      <mu1>1.0</mu1>
++      <mu2>1.0</mu2>
++    </gazebo>
++    <gazebo reference="DriveR_link">
++      <mu1>1.0</mu1>
++      <mu2>1.0</mu2>
++    </gazebo>
++  </xacro:macro>
++
++  <!-- SUPERSEDED (tried 30 Sep 2026, Pepper still tipped: it overwrites link velocity in the
++       link frame, so pitch becomes a climb gravity cannot correct). Not included. -->
++  <xacro:macro name="ign_base_velocity_control">
++    <gazebo>
++      <plugin filename="ignition-gazebo-velocity-control-system"
++        name="ignition::gazebo::systems::VelocityControl">
++        <!-- Command the WHEEL BASE. The model's canonical link, base_link, is the torso;
++             the 11.6 kg wheel base (Tibia) hangs below it through HipRoll, HipPitch and
++             KneePitch. Driving base_link pushed her at the shoulders: measured 30 Sep 2026,
++             pitch grew steadily from 0 to 70 deg over 6 s at 0.3 m/s. Link commands arrive on
++             /model/pepper_robot/link/Tibia/cmd_vel, which bridge.launch.py now targets. -->
++        <link_name>Tibia</link_name>
++      </plugin>
++      <plugin filename="ignition-gazebo-odometry-publisher-system"
++        name="ignition::gazebo::systems::OdometryPublisher">
++        <odom_frame>odom</odom_frame>
++        <robot_base_frame>base_link</robot_base_frame>
++        <odom_topic>/model/pepper_robot/odometry</odom_topic>
++        <dimensions>2</dimensions>
++      </plugin>
++    </gazebo>
++  </xacro:macro>
++
++
++  <!-- Superseded by ign_base_velocity_control (kept for reference / revert). -->
+   <xacro:macro name="ign_diff_drive">
+     <gazebo>
+       <plugin filename="ignition-gazebo-diff-drive-system"
+@@ -165,21 +225,53 @@
+        the shared WORLD_TEMPLATE, so both branches get it from one place; adding it to one
+        generated world instead would make gen_world.py fail its own difference check,
+        correctly. -->
+-  <xacro:macro name="ign_base_contact" params="
+-   topic:=bumper
+-">
+-    <gazebo reference="Tibia">
+-      <sensor name="base_contact" type="contact">
+-        <topic>${topic}</topic>
++  <!-- One contact sensor on one link. The Contact system publishes each on
++       /world/<w>/model/pepper_robot/link/<link>/sensor/<name>/contact (it ignores <topic>);
++       tools/contact_relay.py reads them all and republishes on /pepper_robot/bumper. -->
++  <xacro:macro name="ign_link_contact" params="link sensor collision">
++    <gazebo reference="${link}">
++      <sensor name="${sensor}" type="contact">
+         <always_on>true</always_on>
+         <update_rate>50</update_rate>
+         <contact>
+-          <collision>Tibia_collision</collision>
++          <collision>${collision}</collision>
+         </contact>
+       </sensor>
+     </gazebo>
+   </xacro:macro>
+ 
++  <!-- Collision sensing for the whole robot, not just the base. The base shell (Tibia) alone
++       missed side-on bumps: in the standing pose the hands reach 0.38 m from the centre line and
++       the forearms 0.23 m, so the arms touch a table edge or couch back before the base does.
++       The torso is fixed-jointed to base_link, so its collision is the lumped one. -->
++  <xacro:macro name="ign_base_contact" params="
++   topic:=bumper
++">
++    <xacro:ign_link_contact link="Tibia" sensor="base_contact" collision="Tibia_collision" />
++    <xacro:ign_link_contact link="base_link" sensor="torso_contact"
++      collision="base_link_fixed_joint_lump__torso_collision" />
++    <xacro:ign_link_contact link="LBicep" sensor="lbicep_contact" collision="LBicep_collision" />
++    <xacro:ign_link_contact link="RBicep" sensor="rbicep_contact" collision="RBicep_collision" />
++    <xacro:ign_link_contact link="LForeArm" sensor="lforearm_contact" collision="LForeArm_collision" />
++    <xacro:ign_link_contact link="RForeArm" sensor="rforearm_contact" collision="RForeArm_collision" />
++    <xacro:ign_link_contact link="l_wrist" sensor="lhand_contact" collision="l_wrist_collision" />
++    <xacro:ign_link_contact link="r_wrist" sensor="rhand_contact" collision="r_wrist_collision" />
++    <!-- Added 1 Oct 2026: every other link with collision geometry, bar the fingers (inside the
++         hands' reach) and the wheels (always on the floor). Hip and Pelvis sit between the base
++         shell and the torso, 0.3-0.7 m up, so an overhang at that height (a table edge, or the
++         photogrammetric Chair_B, a seat floating at 0.30-0.70 m with no scanned legs) meets
++         them first. Without sensors there Pepper wedged herself under that seat in two smoke-test
++         routes and sat for 325 steps with no collision counted. -->
++    <xacro:ign_link_contact link="Hip" sensor="hip_contact" collision="Hip_collision" />
++    <xacro:ign_link_contact link="Pelvis" sensor="pelvis_contact" collision="Pelvis_collision" />
++    <xacro:ign_link_contact link="Neck" sensor="neck_contact" collision="Neck_collision" />
++    <xacro:ign_link_contact link="Head" sensor="head_contact" collision="Head_collision" />
++    <xacro:ign_link_contact link="LShoulder" sensor="lshoulder_contact" collision="LShoulder_collision" />
++    <xacro:ign_link_contact link="RShoulder" sensor="rshoulder_contact" collision="RShoulder_collision" />
++    <xacro:ign_link_contact link="LElbow" sensor="lelbow_contact" collision="LElbow_collision" />
++    <xacro:ign_link_contact link="RElbow" sensor="relbow_contact" collision="RElbow_collision" />
++  </xacro:macro>
++
+   <xacro:macro name="ign_imu" params="
+    topic:=imu
+    update_rate:=100
+@@ -404,7 +496,8 @@
+       <turnGravityOff>false</turnGravityOff>
+     </gazebo>
+     <gazebo reference="WheelFL_link">
+-      <mu1>1</mu1>
++      <!-- frictionless support: the base is driven by VelocityControl -->
++      <mu1>0</mu1>
+       <mu2>0</mu2>
+       <kp value="10000000.0" />
+       <kd value="1.0" />
+@@ -413,8 +506,9 @@
+       <turnGravityOff>false</turnGravityOff>
+     </gazebo>
+     <gazebo reference="WheelB_link">
+-      <mu1>1.0</mu1>
+-      <mu2>1.0</mu2>
++      <!-- frictionless support: the base is driven by VelocityControl -->
++      <mu1>0</mu1>
++      <mu2>0</mu2>
+       <kp value="10000000.0" />
+       <kd value="1.0" />
+       <fdir1 value="1 0 0" />
+@@ -422,8 +516,9 @@
+       <turnGravityOff>false</turnGravityOff>
+     </gazebo>
+     <gazebo reference="WheelFR_link">
++      <!-- frictionless support: the base is driven by VelocityControl -->
+       <mu1>0</mu1>
+-      <mu2>1</mu2>
++      <mu2>0</mu2>
+       <kp value="10000000.0" />
+       <kd value="1.0" />
+       <fdir1 value="0 1 0" />
+diff --git a/pepper_robot_description/urdf/pepper_robot.ros2_control b/pepper_robot_description/urdf/pepper_robot.ros2_control
+index b26026d..31dafad 100644
+--- a/pepper_robot_description/urdf/pepper_robot.ros2_control
++++ b/pepper_robot_description/urdf/pepper_robot.ros2_control
+@@ -86,7 +86,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LShoulderPitch']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -101,7 +104,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LShoulderRoll']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -116,7 +122,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LElbowYaw']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -131,7 +140,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LElbowRoll']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -146,7 +158,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LWristYaw']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -161,7 +176,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RShoulderPitch']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -176,7 +194,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RShoulderRoll']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -191,7 +212,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RElbowYaw']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -206,7 +230,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RElbowRoll']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -221,7 +248,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RWristYaw']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -236,7 +266,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['HeadYaw']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -251,7 +284,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['HeadPitch']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -266,7 +302,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['HipRoll']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -281,7 +320,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['HipPitch']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -296,7 +338,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['KneePitch']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -311,7 +356,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LHand']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -326,7 +374,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LFinger11']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -341,7 +392,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LFinger12']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -356,7 +410,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LFinger13']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -371,7 +428,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LFinger21']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -386,7 +446,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LFinger22']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -401,7 +464,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LFinger23']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -416,7 +482,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LFinger31']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -431,7 +500,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LFinger32']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -446,7 +518,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LFinger33']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -461,7 +536,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LFinger41']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -476,7 +554,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LFinger42']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -491,7 +572,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LFinger43']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -506,7 +590,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LThumb1']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -521,7 +608,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['LThumb2']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -536,7 +626,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RHand']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -551,7 +644,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RFinger11']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -566,7 +662,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RFinger12']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -581,7 +680,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RFinger13']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -596,7 +698,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RFinger21']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -611,7 +716,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RFinger22']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -626,7 +734,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RFinger23']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -641,7 +752,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RFinger31']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -656,7 +770,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RFinger32']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -671,7 +788,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RFinger33']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -686,7 +806,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RFinger41']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -701,7 +824,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RFinger42']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -716,7 +842,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RFinger43']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -731,7 +860,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RThumb1']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+@@ -746,7 +878,10 @@
+         <xacro:if value="${'effort' in command_interface}">
+           <command_interface name="effort" />
+         </xacro:if>
+-        <state_interface name="position" />
++        <state_interface name="position">
++          <!-- ign_ros2_control reads this; initial_position above is for fake_components -->
++          <param name="initial_value">${initial_positions['RThumb2']}</param>
++        </state_interface>
+         <state_interface name="velocity" />
+         <state_interface name="effort" />
+       </joint>
+diff --git a/pepper_robot_description/urdf/pepper_robot.urdf.xacro b/pepper_robot_description/urdf/pepper_robot.urdf.xacro
+index f58663c..6a35247 100644
+--- a/pepper_robot_description/urdf/pepper_robot.urdf.xacro
++++ b/pepper_robot_description/urdf/pepper_robot.urdf.xacro
+@@ -70,6 +70,7 @@
+   <xacro:include filename="pepper_sensors.xacro" />
+   <xacro:include filename="pepper_fingers.xacro" />
+   <xacro:include filename="pepper_wheels.xacro" />
++  <xacro:include filename="pepper_drive_wheels.xacro" />  <!-- simulation drivetrain -->
+ 
+   <!-- ROS 2 control -->
+   <xacro:if value="$(arg ros2_control)">
+@@ -87,7 +88,7 @@
+   <!-- Gazebo - Additional plugins -->
+   <xacro:gazebo_misc_references />
+   <xacro:ign_pose_publisher />
+-  <xacro:ign_diff_drive />
++  <xacro:ign_virtual_diff_drive />  <!-- was ign_diff_drive on the real wheels; see pepper_drive_wheels.xacro -->
+ 
+   <!-- Gazebo - Simulated sensors -->
+   <xacro:if value="$(arg sensors)">
+-- 
+2.34.1
+
+
+From cec4f2ddcb9298f3f706d1072bd934097c607a70 Mon Sep 17 00:00:00 2001
+From: Jaishil-Patel <jaishilpatel1105@gmail.com>
+Date: Fri, 2 Oct 2026 11:09:42 +0200
+Subject: [PATCH 6/7] Fit the simulated base and standing pose to the real
+ Pepper
+
+Measured on the robot 2 Oct 2026 (docs/calib_20261002_0948 in the main repo).
+
+- DiffDrive acceleration limits 0.34 m/s^2 and 0.80 rad/s^2, from the 10-90% rise of a
+  0.3 m/s step (0.64/0.80 s) and a 0.9 rad/s spin (0.78/1.06 s). The sim had none and
+  reached speed in ~0.1 s, 6-10x faster than the robot. Deceleration taken as symmetric.
+- Standing pose from the robot's StandInit: right elbow roll 0.511 (was 0.17, not the
+  mirror of the left), shoulder pitch 1.575/1.583 (was 1.77), and the rest of the arms,
+  hips and knee to the measured values. Hands and fingers unchanged.
+---
+ .../config/initial_joint_positions.yaml       | 96 ++++++++++---------
+ .../pepper_robot/model.sdf                    |  4 +
+ .../urdf/pepper_robot.gazebo                  |  9 ++
+ 3 files changed, 63 insertions(+), 46 deletions(-)
+
+diff --git a/pepper_robot_description/config/initial_joint_positions.yaml b/pepper_robot_description/config/initial_joint_positions.yaml
+index 5b1f4c0..73294ff 100644
+--- a/pepper_robot_description/config/initial_joint_positions.yaml
++++ b/pepper_robot_description/config/initial_joint_positions.yaml
+@@ -1,46 +1,50 @@
+-initial_joint_positions:
+-  HeadPitch: -0.2
+-  HeadYaw: 0.0
+-  LElbowRoll: -0.52
+-  LElbowYaw: -1.22
+-  LFinger11: 0.1
+-  LFinger12: 0.1
+-  LFinger13: 0.1
+-  LFinger21: 0.1
+-  LFinger22: 0.1
+-  LFinger23: 0.1
+-  LFinger31: 0.1
+-  LFinger32: 0.1
+-  LFinger33: 0.1
+-  LFinger41: 0.1
+-  LFinger42: 0.1
+-  LFinger43: 0.1
+-  LHand: 0.5
+-  LShoulderPitch: 1.77
+-  LShoulderRoll: 0.17
+-  LThumb1: 0.1
+-  LThumb2: 0.1
+-  LWristYaw: 0.0
+-  RElbowRoll: 0.17
+-  RElbowYaw: 1.22
+-  RFinger11: 0.1
+-  RFinger12: 0.1
+-  RFinger13: 0.1
+-  RFinger21: 0.1
+-  RFinger22: 0.1
+-  RFinger23: 0.1
+-  RFinger31: 0.1
+-  RFinger32: 0.1
+-  RFinger33: 0.1
+-  RFinger41: 0.1
+-  RFinger42: 0.1
+-  RFinger43: 0.1
+-  RHand: 0.5
+-  RShoulderPitch: 1.77
+-  RShoulderRoll: -0.17
+-  RThumb1: 0.1
+-  RThumb2: 0.1
+-  RWristYaw: 0.0
+-  KneePitch: 0.0
+-  HipPitch: 0.0
+-  HipRoll: 0.0
++# Body joints: measured on the real Pepper in StandInit (after WAKEUP), 2 Oct 2026 --
++# docs/calib_20261002_0948/standing_angles.txt. The old values had RElbowRoll 0.17 (real 0.511,
++# mirror of LElbowRoll -0.511) and both ShoulderPitch 1.77 (real 1.575/1.583). HeadYaw is 0 (real
++# 0.009). Hands and fingers were not measured and keep their previous values.
++initial_joint_positions:
++  HeadPitch: -0.204
++  HeadYaw: 0.0
++  LElbowRoll: -0.511
++  LElbowYaw: -1.246
++  LFinger11: 0.1
++  LFinger12: 0.1
++  LFinger13: 0.1
++  LFinger21: 0.1
++  LFinger22: 0.1
++  LFinger23: 0.1
++  LFinger31: 0.1
++  LFinger32: 0.1
++  LFinger33: 0.1
++  LFinger41: 0.1
++  LFinger42: 0.1
++  LFinger43: 0.1
++  LHand: 0.5
++  LShoulderPitch: 1.575
++  LShoulderRoll: 0.146
++  LThumb1: 0.1
++  LThumb2: 0.1
++  LWristYaw: 0.029
++  RElbowRoll: 0.511
++  RElbowYaw: 1.241
++  RFinger11: 0.1
++  RFinger12: 0.1
++  RFinger13: 0.1
++  RFinger21: 0.1
++  RFinger22: 0.1
++  RFinger23: 0.1
++  RFinger31: 0.1
++  RFinger32: 0.1
++  RFinger33: 0.1
++  RFinger41: 0.1
++  RFinger42: 0.1
++  RFinger43: 0.1
++  RHand: 0.5
++  RShoulderPitch: 1.583
++  RShoulderRoll: -0.138
++  RThumb1: 0.1
++  RThumb2: 0.1
++  RWristYaw: -0.037
++  KneePitch: 0.012
++  HipPitch: -0.015
++  HipRoll: -0.014
+diff --git a/pepper_robot_description/pepper_robot/model.sdf b/pepper_robot_description/pepper_robot/model.sdf
+index 31821f6..8ca86ac 100644
+--- a/pepper_robot_description/pepper_robot/model.sdf
++++ b/pepper_robot_description/pepper_robot/model.sdf
+@@ -3315,6 +3315,10 @@
+       <wheel_radius>0.072</wheel_radius>
+       <topic>/model/pepper_robot/cmd_vel</topic>
+       <odom_topic>/model/pepper_robot/odometry</odom_topic>
++      <max_linear_acceleration>0.34</max_linear_acceleration>
++      <min_linear_acceleration>-0.34</min_linear_acceleration>
++      <max_angular_acceleration>0.80</max_angular_acceleration>
++      <min_angular_acceleration>-0.80</min_angular_acceleration>
+     </plugin>
+     <frame name='Accelerometer_sensor_fixedjoint' attached_to='torso'>
+       <pose>0.00239 -0.03575 0.00626 0 -0 0</pose>
+diff --git a/pepper_robot_description/urdf/pepper_robot.gazebo b/pepper_robot_description/urdf/pepper_robot.gazebo
+index 15e774e..6d3d4fa 100644
+--- a/pepper_robot_description/urdf/pepper_robot.gazebo
++++ b/pepper_robot_description/urdf/pepper_robot.gazebo
+@@ -58,6 +58,15 @@
+         <wheel_radius>0.072</wheel_radius>
+         <topic>/model/pepper_robot/cmd_vel</topic>
+         <odom_topic>/model/pepper_robot/odometry</odom_topic>
++        <!-- Acceleration limits measured on the real Pepper, 2 Oct 2026 (tools/base_sysid.py,
++             docs/calib_20261002_0948): 10-90% rise of 0.64/0.80 s on a 0.3 m/s step and
++             1.06/0.78 s on a 0.9 rad/s spin, so a = 0.8 v / t_rise = 0.34 m/s^2 and 0.80 rad/s^2.
++             Without these the simulated base reached speed in ~0.1 s, 6-10x faster than the
++             robot. Deceleration was not measured and is taken as symmetric. -->
++        <max_linear_acceleration>0.34</max_linear_acceleration>
++        <min_linear_acceleration>-0.34</min_linear_acceleration>
++        <max_angular_acceleration>0.80</max_angular_acceleration>
++        <min_angular_acceleration>-0.80</min_angular_acceleration>
+       </plugin>
+     </gazebo>
+     <gazebo reference="DriveL_link">
+-- 
+2.34.1
+
+
+From b5d26ae85a6090e03378dd5472de981ef68defcd Mon Sep 17 00:00:00 2001
+From: Jaishil-Patel <jaishilpatel1105@gmail.com>
+Date: Wed, 7 Oct 2026 11:44:06 +0200
+Subject: [PATCH 7/7] Pitch the head down for navigation: HeadPitch 0.45, not
+ StandInit's -0.204
+
+-0.204 looks ~12 deg up (positive HeadPitch looks down). With the 45-deg vertical field of
+view the bottom of the depth image sat ~11 deg below horizontal, so the floor never appeared
+and a 0.5 m object was invisible nearer than ~3.3 m; in a smoke run Pepper hit a bag while
+her nearest depth return was 1.5-1.9 m away. At 0.45 the floor is in view from ~1 m and the
+bag reads 0.79 m at 0.7 m. The real robot is posed to the same value by the main repo's
+tools/naoqi_shim.py SIM_HEAD_PITCH.
+---
+ .../config/initial_joint_positions.yaml                    | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/pepper_robot_description/config/initial_joint_positions.yaml b/pepper_robot_description/config/initial_joint_positions.yaml
+index 73294ff..1500cf3 100644
+--- a/pepper_robot_description/config/initial_joint_positions.yaml
++++ b/pepper_robot_description/config/initial_joint_positions.yaml
+@@ -2,8 +2,13 @@
+ # docs/calib_20261002_0948/standing_angles.txt. The old values had RElbowRoll 0.17 (real 0.511,
+ # mirror of LElbowRoll -0.511) and both ShoulderPitch 1.77 (real 1.575/1.583). HeadYaw is 0 (real
+ # 0.009). Hands and fingers were not measured and keep their previous values.
++#
++# HeadPitch is NOT the StandInit value (-0.204, ~12 deg up, for facing people). It is pitched
++# down for navigation (positive = down): at -0.204 the depth camera never saw the floor or any
++# low obstacle within ~3 m (found 7 Oct 2026). The real robot is posed to the same value by
++# tools/naoqi_shim.py SIM_HEAD_PITCH, and the two must stay equal.
+ initial_joint_positions:
+-  HeadPitch: -0.204
++  HeadPitch: 0.45
+   HeadYaw: 0.0
+   LElbowRoll: -0.511
+   LElbowYaw: -1.246
+-- 
+2.34.1
+

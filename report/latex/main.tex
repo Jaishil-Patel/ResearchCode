@@ -1,0 +1,87 @@
+\documentclass[conference]{IEEEtran}
+\usepackage[T1]{fontenc}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{url}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,fit,backgrounds,calc}
+\usepackage{pdfpages}
+% Clickable references, citations and URLs; must be loaded last.
+\usepackage[hidelinks]{hyperref}
+
+
+% Marks text that still needs the author's attention; delete before submitting.
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+
+\begin{document}
+
+\title{Closing the Gap: Photogrammetry-Based Simulation for Sim-to-Real Transfer of
+Reinforcement Learning Navigation on the Pepper Robot}
+
+\author{\IEEEauthorblockN{Jaishil Patel - 2602867}
+\IEEEauthorblockA{\textit{School of Computer Science} \\
+\textit{University of the Witwatersrand}\\
+Johannesburg, South Africa}
+\and
+\IEEEauthorblockN{Pravesh Ranchod}
+\IEEEauthorblockA{\textit{School of Computer Science} \\
+\textit{University of the Witwatersrand}\\
+Johannesburg, South Africa}
+\and
+\IEEEauthorblockN{Branden Ingram}
+\IEEEauthorblockA{\textit{School of Computer Science} \\
+\textit{University of the Witwatersrand}\\
+Johannesburg, South Africa}
+}
+
+\maketitle
+
+\begin{abstract}
+Reinforcement learning can produce navigation policies in simulation, but these policies often fail
+on real robots because the simulator differs from reality. This study asks whether building the
+simulator from a photogrammetric scan of the deployment room narrows this sim-to-real gap for the
+Pepper humanoid robot. A real room was scanned with a tablet to create a photogrammetric simulator,
+and a standard simulator of the same room was built by hand from tape measurements, so that the
+source of the geometry was the only difference between them. Depth-based navigation policies were
+trained in each with Soft Actor-Critic under identical domain randomisation and deployed without
+further training on the physical Pepper. On the real robot, the photogrammetry policy's success rate
+fell 8 percentage points below its simulated value, against 37 for the standard policy, suggesting
+better transfer. It also achieved odometry-estimated success on 9 of 20 real routes against 6,
+although this difference was not significant. Failures occurred in the narrow gap between the couch
+and the bag, where the robot's built-in collision protection stopped it. For the two policies
+tested, the results suggest that a reconstructed room yields a simulator whose results transfer more
+faithfully to the real robot, while modelling the robot's own behaviour remains necessary.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Sim-to-Real, Photogrammetry, Reinforcement Learning, Soft Actor-Critic, Pepper Robot, GitHub: \url{https://github.com/Jaishil-Patel/ResearchCode}
+\end{IEEEkeywords}
+
+\input{sections/introduction}
+\input{sections/research_question}
+\input{sections/background}
+\input{sections/related_work}
+\input{sections/methodology}
+\input{sections/results}
+\input{sections/limitations}
+\input{sections/future_work}
+\input{sections/conclusion}
+
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+
+\clearpage
+\onecolumn
+\appendix
+\input{sections/appendix}
+
+\clearpage
+\input{sections/ai_declaration}
+
+\end{document}

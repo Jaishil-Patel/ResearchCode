@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>pepper_room_description</name>
+  <version>0.1.0</version>
+  <description>
+    Ignition models and worlds for the two experiment branches: room_photogrammetry,
+    reconstructed from a phone capture, and room_standard, built from tape measurements
+    of the same room. Both are generated -- see tools/mesh_import.py and tools/gen_world.py.
+  </description>
+  <maintainer email="jaishilpatel1105@gmail.com">Jaishil Patel</maintainer>
+  <author>Jaishil Patel</author>
+  <license>BSD</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>ros_ign_gazebo</exec_depend>
+  <exec_depend>pepper_robot_description</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

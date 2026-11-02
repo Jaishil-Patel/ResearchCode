@@ -1,0 +1,177 @@
+{
+  "room": "final_scan",
+  "variant": "perturbed",
+  "source_path": "simulation/photogrammetry/ground_truth/final_scan_perturbed_spec.yaml",
+  "fingerprint": "80f7152948224095",
+  "params": {
+    "res": 0.05,
+    "radius": 0.28,
+    "clearance": 0.12,
+    "robot_height": 1.2
+  },
+  "goal": {
+    "xy": [
+      3.75,
+      1.1
+    ],
+    "radius_m": 0.6
+  },
+  "n_routes": 10,
+  "routes": [
+    {
+      "route_id": "r000",
+      "start": [
+        1.6046,
+        1.78
+      ],
+      "start_yaw": 1.4361,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 2.7849
+    },
+    {
+      "route_id": "r001",
+      "start": [
+        1.3329,
+        1.5781
+      ],
+      "start_yaw": -2.1987,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 3.1678
+    },
+    {
+      "route_id": "r002",
+      "start": [
+        5.0388,
+        2.7159
+      ],
+      "start_yaw": 2.6654,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 1.9364
+    },
+    {
+      "route_id": "r003",
+      "start": [
+        2.3235,
+        3.0847
+      ],
+      "start_yaw": -2.468,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 2.0435
+    },
+    {
+      "route_id": "r004",
+      "start": [
+        1.584,
+        1.3425
+      ],
+      "start_yaw": 0.9075,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 3.0213
+    },
+    {
+      "route_id": "r005",
+      "start": [
+        1.1931,
+        2.1719
+      ],
+      "start_yaw": 2.4645,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 3.0692
+    },
+    {
+      "route_id": "r006",
+      "start": [
+        0.4915,
+        2.2749
+      ],
+      "start_yaw": 1.2096,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 3.7278
+    },
+    {
+      "route_id": "r007",
+      "start": [
+        1.9204,
+        1.3098
+      ],
+      "start_yaw": -2.0623,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 2.7885
+    },
+    {
+      "route_id": "r008",
+      "start": [
+        1.9591,
+        2.8802
+      ],
+      "start_yaw": -2.4339,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 2.3107
+    },
+    {
+      "route_id": "r009",
+      "start": [
+        1.6964,
+        2.5392
+      ],
+      "start_yaw": -3.061,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 2.4657
+    }
+  ],
+  "layout": {
+    "moved": {
+      "Bag": {
+        "from": [
+          2.33,
+          2.15
+        ],
+        "to": [
+          2.9,
+          1.6
+        ]
+      },
+      "green_pole": {
+        "from": [
+          3.28,
+          2.88
+        ],
+        "to": [
+          3.0,
+          2.1
+        ]
+      }
+    },
+    "rule": "same sampler as nominal; starts >= 0.32 m clear on the perturbed spec and the photogrammetry mesh; rng seed 2 (nominal used 0)"
+  }
+}

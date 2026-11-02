@@ -1,0 +1,14 @@
+connecting to NAOqi at 192.168.50.226:9559 ...
+[I] 1792049273.072072 4595 qimessaging.session: Session listener created on tcp://0.0.0.0:0
+[I] 1792049273.072304 4595 qimessaging.transportserver: TransportServer will listen on: tcp://172.21.194.170:38851
+[I] 1792049273.072310 4595 qimessaging.transportserver: TransportServer will listen on: tcp://127.0.0.1:38851
+[I] 1792049273.072312 4595 qimessaging.transportserver: TransportServer will listen on: tcp://10.255.255.254:38851
+[W] 1792049273.072387 4604 qi.path.sdklayout: No Application was created, trying to deduce paths
+connected: NAOqi 2.5.10.7
+commands on 127.0.0.1:45455, depth on 127.0.0.1:45456 -- Ctrl-C to exit
+bumper fr pressed (count 1)
+bumper back pressed (count 1)
+bumper fl pressed (count 1)
+depth: client connected from 127.0.0.1:53546
+watchdog: no MOVE for 0.75s -- stopping base
+base stopped, sockets closed

@@ -1,0 +1,127 @@
+# Dynamics randomisation, proposal S4.4.2, over friction, mass and mass distribution,
+# commanded-velocity behaviour, and wheel slippage.
+#
+# THE SAME FILE IS USED BY BOTH BRANCHES. Holding randomisation constant is what isolates
+# photogrammetry as the independent variable; train.py asserts it rather than trusting it.
+#
+# Per-episode sampling held fixed for the episode, after Peng et al. [2018]. Ranges are
+# hand-picked and moderate, because Zhao et al. [2020] show that excessive variation
+# degrades transfer rather than improving it. Every entry carries its justification --
+# that is what makes "the ranges were justified" a checkable claim in the write-up rather
+# than an assertion.
+#
+# MECHANISM (chosen deliberately and not by
+# default): Fortress has no clean runtime API for mutating link mass or surface friction,
+# and the alternatives are worse under the schedule. Respawning the robot every episode
+# would make reset cost dominate SAC wall-clock; a custom C++ Ignition system plugin is a
+# detour. So:
+#   * command-level effects are resampled EVERY EPISODE, cheaply, in this process;
+#   * mass, mass distribution and friction are resampled at WORLD RESET, by regenerating
+#     the robot SDF and respawning.
+# The cost is that mass and friction vary across a coarser grain than the command-level
+# terms. That is a real limitation and it is stated here so it reaches the write-up.
+
+seed: 0
+
+# -- per episode, applied to every command ------------------------------------------------
+
+command:
+  # Multiplicative gain on commanded velocity. Covers battery state, drivetrain wear and
+  # the calibration error between what NAOqi is told and what the base does. Peng et al.
+  # find that policies tolerate substantial calibration error if it was randomised over.
+  linear_scale: [0.80, 1.20]
+  angular_scale: [0.80, 1.20]
+
+  # Additive zero-mean noise, resampled per step rather than per episode: this models
+  # actuation jitter, which is not a fixed property of the robot for an episode the way a
+  # drivetrain gain is.
+  linear_noise_std_mps: 0.02
+  angular_noise_std_rps: 0.05
+
+  # Command latency OFFSET, in control steps, around env.yaml action.sim_command_delay_steps
+  # (4 steps = 0.8 s, the measured median). Held fixed for the episode. Peng et al. and
+  # Chaffre et al. both single out action timestep and latency as more critical than the
+  # physical parameters. Measured on the real robot 2 Oct 2026: 0.43-1.18 s, so 4 +- 2 steps
+  # (0.4-1.2 s) covers the whole measured spread. Was [0, 2] absolute (0-0.4 s), which never
+  # reached the robot's real latency at all.
+  latency_steps: [-2, 2]
+
+  # Wheel slippage, as a probability per step that a command is simply not executed.
+  # A crude model of slip, but it is the one the command-level mechanism can express, and
+  # the alternative is not modelling slip at all. Say so in the write-up.
+  slip_probability: [0.0, 0.05]
+
+# -- per episode, applied to observations --------------------------------------------------
+
+observation:
+  # Depth noise in metres, added to the 64x48 observation before normalisation. MEASURED
+  # 2 Oct 2026 (tools/real_obs_check.py, docs/calib_20261002_0948/real_obs): per-pixel
+  # temporal std of the real 64x48 observation on a static scene at 1.2-2.3 m, median 5.5 mm,
+  # 90th percentile 14.7 mm -- below the observation's own 30 mm quantisation step. 10 mm
+  # covers most of that spread; the old 20 mm was a placeholder. (check_depth.py's 4.7 mm
+  # is the std of a patch MEDIAN, which understates per-pixel noise.)
+  depth_noise_std_m: 0.01
+  # Fraction of pixels forced to "no return" per frame. Pepper's depth sensor is
+  # structured light, so glossy, dark and backlit surfaces drop out (S4.4.4) -- and the
+  # simulated camera has no equivalent failure at all. Without this the policy never sees
+  # a dropout before its first day on hardware.
+  dropout_fraction: [0.0, 0.15]
+  # Solid no-return patches (glass, screens, black surfaces). Measured 2 Oct 2026: a window
+  # left a steady band ~25% of the image wide and full height with no return, while only 1.3%
+  # of pixels flickered -- per-pixel dropout never produces that, and no-return reads as FAR,
+  # i.e. open space. A patch starts with start_probability per frame, survives each frame with
+  # continue_probability (mean life 10 frames = 2 s at 5 Hz) and drifts sideways.
+  dropout_blob:
+    start_probability: 0.03
+    continue_probability: 0.9
+    width_fraction: [0.10, 0.35]
+    height_fraction: [0.5, 1.0]
+  # Depth frame rate in Hz, sampled per episode LOG-uniformly; on control steps where no
+  # new frame would have arrived at that rate, the policy sees the previous frame again.
+  # MEASURED 2 Oct 2026 (docs/calib_20261002_0948/check_depth.txt): the real stream
+  # delivered 1.9-3 fps over Wi-Fi against the 5 Hz control rate, while the simulated
+  # camera delivers 15 -- so without this, ~half the real steps show the policy a repeated
+  # frame it never saw in training. That exact mismatch (camera rate) is what a previous
+  # Pepper sim-to-real project in this group identified as a main cause of its failed
+  # transfer. The range spans Wi-Fi (~2 Hz) to a faster wired link; anything >= control_hz
+  # is always fresh, so about half of all episodes have stale frames. Sim only: on the
+  # robot the staleness is real.
+  depth_rate_hz: [1.5, 15.0]
+
+# -- per world reset, via SDF regeneration and respawn --------------------------------------
+
+body:
+  # SAMPLED, NOT YET APPLIED. rl/env/randomisation.sample_body_params() draws these two
+  # every world reset and they are recorded in the run log, but nothing in this codebase
+  # currently mutates Pepper's mass or centre of mass to match -- that needs per-link
+  # mass/inertia edits inside the vendored pepper_ign_moveit2 fork's model.sdf, verified
+  # against how DART actually integrates them, which is a distinct piece of work from the
+  # friction respawn below. Do not read their presence here as evidence they are active;
+  # rl/env/body_randomisation.py's module docstring states this limitation plainly, and
+  # so should the write-up.
+  #
+  # Multiplier on total mass. Pepper is ~28 kg; a payload or a partly-flat battery moves
+  # it a few kg, so +-15% is generous without being fantasy.
+  mass_scale: [0.85, 1.15]
+  # Lateral offset of the centre of mass, in metres. This is the "mass distribution" of
+  # S4.4.2, and it is what makes a robot pull to one side.
+  com_offset_m: [-0.03, 0.03]
+  # How often (in episodes) the world-reset half resamples and respawns. Coarse
+  # deliberately: each resample costs a model remove+create and a settle, and
+  # randomisation.py's own module docstring already states the mechanism trade-off this
+  # cadence lives inside -- per-episode respawn would let reset cost dominate SAC
+  # wall-clock, so this is much rarer than the per-episode command-level terms above.
+  resample_every_episodes: 20
+
+surface:
+  # Coulomb friction, IMPLEMENTED via rl/env/body_randomisation.py -- the room's floor
+  # collision surface is respawned with a new mu/mu2 every `body.resample_every_episodes`
+  # episodes. Friction is a property of a contact PAIR, so changing the floor's value has
+  # the same physical effect as changing the wheel's would; the floor is what Fortress can
+  # actually mutate at runtime (via remove+create), since there is no service to edit an
+  # existing entity's surface parameters.
+  #
+  # The span covers carpet through to a polished hard floor. Peng et al. find removing
+  # friction randomisation alone drops real-world success from 0.89 to 0.48 -- of
+  # everything in this file, this is the entry with the most direct evidence behind it.
+  mu: [0.6, 1.2]

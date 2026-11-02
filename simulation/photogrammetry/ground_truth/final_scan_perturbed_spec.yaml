@@ -1,0 +1,79 @@
+# ROBUSTNESS LAYOUT (Sub-question 3), 14 Oct 2026: final_scan_spec.yaml with exactly two
+# pieces moved, nothing else changed. Used ONLY to plan the perturbed route set
+# (rl/cache/routes_final_scan_perturbed.json); no policy ever trained on it.
+#   Bag:        (2.33, 2.15) -> (2.90, 1.60)
+#   green_pole: (3.28, 2.88) -> (3.00, 2.10)
+#
+# Standard-branch room spec for final_scan.
+# Origin (0,0): the corner where the left (door) wall x_min meets the y_min wall -- the same
+# corner mesh_import.py was pinned to with --yaw 177.91 --origin "-2.785 -2.040 -1.798".
+# Sizes and heights: tape (final_scan.csv). Positions of Bag, Box2, Couch and both poles: taken
+# from the scan footprints (24 Sep 2026), because the planner positions disagreed with the scan
+# by 0.15-0.55 m. State this in the write-up.
+
+room:
+  length: 5.5
+  width: 4.2
+  height: 3.1              # re-taped 23 Sep (planner said 2.5)
+  wall_thickness: 0.1
+  floor_thickness: 0.05
+  include_ceiling: true
+  mu: 1.0
+  mu2: 1.0
+
+openings:
+  - name: Door
+    wall: x_min            # left wall
+    start: 1.67
+    end: 2.54
+    bottom: 0
+    top: 2.46
+
+furniture:
+  - name: Box
+    size: [1.45, 0.8, 0.71]
+    pose: [0.725, 3.8, 0.355]
+  - name: Shelf
+    size: [3.9, 0.6, 2.0]
+    pose: [3.4, 3.9, 1.0]
+  - name: Bag
+    size: [0.24, 0.37, 0.58]
+    pose: [2.90, 1.60, 0.29]        # MOVED for robustness trials (nominal: 2.33, 2.15)
+  - name: Box2
+    size: [0.69, 1.44, 0.84]
+    pose: [4.60, 1.55, 0.42]        # scan; planner had (5.155, 1.68)
+  - name: Box3                      # orange box between Box2 and the right wall -- NOT taped;
+    size: [0.45, 1.50, 0.75]        #   size and pose from the scan (top-view render, 25 Sep 2026)
+    pose: [5.275, 1.55, 0.375]
+  - name: Couch
+    size: [1.33, 0.81, 0.81]
+    pose: [2.17, 0.405, 0.405]      # scan x; planner had 2.345
+  - name: green_pole
+    shape: cylinder
+    size: [0.1, 0.1, 0.700]
+    pose: [3.00, 2.10, 0.350]    # MOVED for robustness trials (nominal: 3.28, 2.88)
+  - name: goal                      # the red-topped pole
+    shape: cylinder
+    size: [0.1, 0.1, 1.000]
+    pose: [3.75, 1.10, 0.500]    # planner had (3.9, 1.15), floor to ceiling -- wrong
+  # Two chairs, NOT taped (no access to the room after 30 Sep 2026): footprint, position and
+  # height from the scan (min-area rectangle of the scanned surface, 1 Oct 2026). The scan
+  # captured almost no legs (10-13% of each chair's surface lies below 0.30 m); a bounding box
+  # is still right for Pepper, who cannot pass under a seat or between chair legs.
+  # The door is CLOSED, as it was in the scan and as it will be for the real-robot runs. The
+  # opening above stays (it records the frame and lintel); this leaf fills it. Without it the
+  # route planner put starts in the doorway (r004 at x = 0.03) and Pepper could drive out of
+  # the standard world through a hole the photogrammetric world does not have (1 Oct 2026).
+  - name: Door_leaf_closed
+    size: [0.1, 0.87, 2.46]
+    pose: [-0.05, 2.105, 1.23]
+  - name: Chair_A                   # right of the couch, against the y_min wall
+    size: [0.56, 0.44, 0.48]        #   scan top 0.48 m = seat height; no backrest captured
+    pose: [3.42, 0.30, 0.24]
+  - name: Chair_B                   # bottom-left corner
+    size: [0.72, 0.64, 0.90]        #   height ASSUMED 0.9 m (typical chair back): the scan reads
+    pose: [0.45, 0.51, 0.45]        #   up to 1.3 m there, likely clutter, and footprint may be inflated
+
+physics:
+  max_step_size: 0.005
+  real_time_factor: 1.0

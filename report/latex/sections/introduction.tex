@@ -1,0 +1,24 @@
+\section{Introduction}\label{sec:introduction}
+Reinforcement learning (RL) lets a robot learn navigation by trial and error, but training on a
+real robot is slow, costly and unsafe \cite{sutton2018rl, zhao2020sim}. Policies are therefore
+trained in simulation, where they often fail once moved to the real robot because the simulator
+differs from reality. This is known as the sim-to-real gap \cite{zhao2020sim,
+peng2018dynamics}. It can be narrowed in two ways: by making the simulator a closer copy of
+reality, or by making the policy robust to the differences that remain, for example with domain
+randomisation \cite{tobin2017domain, peng2018dynamics}.
+
+This report tests the first approach on the Pepper robot, while applying the second equally in both
+simulators, whose hardware is too fragile for training on the robot itself and for which no open
+simulator yet supports RL navigation \cite{sekkat2024pepper}. A real room was scanned with a tablet
+and turned into a photogrammetric simulator. A second, standard simulator of the same room was built
+by hand from tape measurements. Navigation policies were trained with Soft Actor-Critic (SAC) under
+the same domain randomisation in each simulator and then deployed, without further training, on the
+physical Pepper over the same 20 routes. Because the source of the room's geometry is the only
+difference between the two, the comparison isolates the effect of the reconstruction, including its
+scanning artefacts.
+
+Using odometry-estimated success on the real robot, the photogrammetry policy showed a smaller
+performance drop from simulation to reality than the standard policy, and it also reached the goal
+more often, although that difference was not statistically significant. Real-robot failures for both
+policies happened at the same two obstacles, where the robot's built-in collision protection stopped
+it.

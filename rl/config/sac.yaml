@@ -1,0 +1,65 @@
+# SAC, proposal S4.4.2, after Haarnoja et al. [2018].
+#
+# ONE CONFIG, BOTH BRANCHES. S4.4.2 makes the geometry source the only independent
+# variable, so the algorithm, its hyperparameters, and the randomisation scheme must be
+# byte-identical across the photogrammetric and standard runs. train.py hashes this file
+# into every run directory; compare_runs refuses to compare two runs whose hashes differ.
+# This is the same discipline tools/gen_world.py --check applies to the worlds.
+
+algorithm: SAC
+
+policy: MultiInputPolicy     # the observation is a Dict of depth image + goal vector
+
+hyperparameters:
+  learning_rate: 3.0e-4      # Haarnoja et al.'s default; no reason found to move it
+  buffer_size: 100000        # ~620 MB with a uint8 depth channel; see the note below
+  learning_starts: 2000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 1
+  # "auto" is Haarnoja et al.'s automatic entropy tuning, targeting -dim(A) = -2. Worth
+  # keeping: a hand-set temperature is one more thing that could differ between branches.
+  ent_coef: auto
+
+# Replay buffer memory is the binding constraint on this machine, not an abstract choice.
+# 7 GB of RAM total, and SB3's DictReplayBuffer stores obs and next_obs separately -- so a
+# transition costs the whole observation twice.
+#
+#   float32 depth: ~24.6 kB/transition -> 2.5 GB at 100k. Does not fit alongside Gazebo
+#                  and torch.
+#   uint8   depth:  ~6.2 kB/transition ->  620 MB at 100k. Fits with room to spare.
+#
+# The uint8 observation dtype (see rl/env/pepper_nav_env.py) is what buys that, and it is
+# also what makes SB3 use a CNN at all.
+#
+# There is deliberately no `optimize_memory_usage` here. It is the obvious lever and it is
+# not available: DictReplayBuffer.__init__ carries a bare
+# `assert not optimize_memory_usage`, so setting it raises before the first training step.
+# It only ever applied to flat observations.
+
+network:
+  # Small on purpose. The observation is already downsampled to 64x48, the task is
+  # 2-DOF, and under software rendering the simulation is the bottleneck rather than the
+  # gradient step -- a larger network would buy nothing and cost VRAM on a 6 GB card.
+  #
+  # cnn_output_dim is the width of NatureCNN's output inside SB3's CombinedExtractor,
+  # which then concatenates it with the 3-element goal vector before net_arch. SB3's
+  # default is 256; 128 is enough for a 64x48 single-channel image and halves the first
+  # linear layer.
+  cnn_output_dim: 128
+  net_arch: [256, 256]
+
+training:
+  total_timesteps: 300000    # SET THIS FROM rl/scripts/bench_throughput.py, not from habit
+  seed: 0                    # recorded per run; vary it for repeats, never between branches
+  eval_every_steps: 25000    # evaluate on the fixed route set, so Task 8 reads logs
+  checkpoint_every_steps: 25000
+
+logging:
+  # SR, SPL and CR from the very first run, because
+  # logging them from the start makes Task 8 a read of existing logs rather than a re-run,
+  # and there is no schedule left for a re-run.
+  metrics: [SR, SPL, CR]
+  tensorboard: true

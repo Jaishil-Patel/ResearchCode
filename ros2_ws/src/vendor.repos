@@ -1,0 +1,46 @@
+# Vendored ROS 2 sources, pinned to the exact commits this project was built and
+# verified against. `vcs import src < src/vendor.repos` reconstructs ros2_ws/src.
+#
+# These checkouts are NOT committed to this repository: each carries its own .git, so
+# committing them would either record a bare gitlink with no submodule config (a clone
+# that silently arrives with empty directories) or duplicate five upstream histories
+# inside this one. Pinning the hashes here is the reproducible alternative, and it is
+# what the write-up's "environment" section should cite.
+#
+# Four of the five are unmodified upstream. `pepper_ign_moveit2` is not: the version
+# named as the preferred candidate in proposal S4.4.2 targets Galactic in Docker and
+# ships no <sensor> elements at all. The port to Humble/Fortress, the sensors, and the
+# drivable base (virtual drive axle, spawned controllers, initial posture, 16 contact
+# sensors) are the commits from 7580ff7 on branch `humble-port`, also exported
+# with `git format-patch --stdout b326d95..humble-port` to
+# `src/patches/pepper_ign_moveit2-humble-port.patch` so the change survives even if
+# that fork becomes unreachable (it is a local branch; it has not been pushed). After
+# importing, apply it:
+#
+#     git -C src/pepper_ign_moveit2 am < src/patches/pepper_ign_moveit2-humble-port.patch
+#
+# ros_ign, gz_ros2_control and ros2_controllers sit on `galactic`/fork branches
+# deliberately -- they are the revisions that build clean against Humble here. Do not
+# "update" them without re-running tools/verify_sensors.sh.
+
+repositories:
+  pepper_ign_moveit2:
+    type: git
+    url: https://github.com/HibaSekkat/pepper_ign_moveit2.git
+    version: b326d95d49bd16d74781d28ab66f447c755e0bd7  # upstream base; then apply the patch
+  pymoveit2:
+    type: git
+    url: https://github.com/AndrejOrsula/pymoveit2.git
+    version: 0bb938cebe2824db8f23468732c0c92f42bafb7e
+  ros_ign:
+    type: git
+    url: https://github.com/gazebosim/ros_gz.git
+    version: 6ffa8271e9db31ce8bdae4c491c23bb4271737cd
+  gz_ros2_control:
+    type: git
+    url: https://github.com/ros-controls/gz_ros2_control.git
+    version: a8df52163923672986df4f237595b4fee5762577
+  ros2_controllers:
+    type: git
+    url: https://github.com/AndrejOrsula/ros2_controllers.git
+    version: a80d30a2d36715aae06c699a89ac7e2fdc8a0d36

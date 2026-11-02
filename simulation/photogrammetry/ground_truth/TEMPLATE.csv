@@ -1,0 +1,44 @@
+# Tape-measured ground truth. Copy to <room>.csv and fill in on site.
+#
+# These K measurements do double duty: they are the reference for the Eq. 4.6 accuracy
+# gate (tools/mesh_validate.py) AND the source geometry for the Task 3 standard branch
+# (simulation/photogrammetry/ground_truth/<room>_spec.yaml). Proposal S4.4.2 requires the
+# standard branch to be metrically faithful rather than eyeballed, so there is no second,
+# looser set of numbers -- these are it. Measure carefully.
+#
+# Aim for K >= 8 spread across all three axes. A gate computed only from floor-plane
+# distances cannot detect a vertical scale error, and a vertical scale error is exactly
+# what puts the depth camera's horizon in the wrong place.
+#
+# Lines starting with '#' and blank lines are ignored.
+#
+# Columns
+#   id            short slug, unique. Appears in the report table.
+#   description   what was measured, in enough detail to repeat it on a second visit.
+#   kind          'extent' -> an overall axis-aligned dimension of the room shell;
+#                            measured on the mesh as the bounding-box extent along 'axis'.
+#                 'points' -> the distance between two specific features; measured on the
+#                            mesh as the distance between point_a and point_b after each
+#                            is snapped to the nearest vertex.
+#   axis          x | y | z. Required for kind=extent, leave empty for kind=points.
+#   point_a       "x y z" in PROCESSED-mesh coordinates. Required for kind=points.
+#   point_b       "x y z" likewise.
+#   measured_m    the tape reading, in metres.
+#   notes         anything that affects trust in the number.
+#
+# Filling in point_a/point_b: run tools/mesh_import.py first, open the generated
+# meshes/visual/room.dae in Blender, snap the 3D cursor to the vertex (Shift+S ->
+# Cursor to Selected with a vertex selected) and read the coordinates off the N panel.
+# Re-run the import with different alignment or scale and these coordinates move -- the
+# validator prints the snap distance for each point, so a stale pick shows up as a large
+# snap rather than as a silently wrong measurement.
+#
+id,description,kind,axis,point_a,point_b,measured_m,notes
+room_length,Long wall interior face to interior face at floor level,extent,x,,,0.000,
+room_width,Short wall interior face to interior face at floor level,extent,y,,,0.000,
+room_height,Floor to ceiling at the room centre,extent,z,,,0.000,ceiling may be trimmed from the mesh; see runbook
+door_width,Door frame interior width,points,,0 0 0,0 0 0,0.000,
+door_height,Door frame floor to lintel,points,,0 0 0,0 0 0,0.000,
+window_width,Window reveal interior width,points,,0 0 0,0 0 0,0.000,
+desk_length,Desk long edge,points,,0 0 0,0 0 0,0.000,
+desk_height,Floor to desk top surface,points,,0 0 0,0 0 0,0.000,

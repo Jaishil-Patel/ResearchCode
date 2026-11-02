@@ -1,0 +1,58 @@
+\section{Background}\label{sec:background}
+
+\subsection{Reinforcement Learning and Soft Actor-Critic}
+Reinforcement learning (RL) models sequential decision-making as a Markov Decision Process
+(MDP): at each step the agent observes a state, takes an action, and receives a reward, and it
+learns a policy that maximises the expected discounted sum of future rewards
+\cite{sutton2018rl}. In mobile-robot navigation, the state usually combines a depth image with
+the position of the goal relative to the robot, and the action is a continuous linear and
+angular velocity \cite{chaffre2020sim}.
+
+Soft Actor-Critic (SAC) \cite{haarnoja2018sac} is the algorithm used in this study. Besides
+maximising reward, it rewards the policy for staying random by adding an entropy term to the
+objective:
+\begin{equation}
+J(\pi)=\sum_{t=0}^{T}\mathbb{E}_{(s_t,a_t)\sim\rho_\pi}\big[r(s_t,a_t)+\alpha\,\mathcal{H}(\pi(\cdot\mid s_t))\big],
+\label{eq:sac}
+\end{equation}
+where $\mathcal{H}$ is the entropy of the policy and the temperature $\alpha$ sets how much
+exploration is valued relative to reward. A policy that does not commit too early to one way of
+solving the task is less likely to overfit to the simulator. SAC is off-policy: it stores past
+experience in a replay buffer and reuses it many times, learns two critics with slowly updated
+target copies to avoid overestimating values, and tunes $\alpha$ automatically
+\cite{haarnoja2018sac}. It suits this study because Pepper's actions are continuous, because
+reusing experience matters when every simulated step runs in real time, and because it has
+already been used for sim-to-real navigation \cite{chaffre2020sim}.
+
+\subsection{The Sim-to-Real Gap and Domain Randomisation}
+A policy trained in simulation often fails on the real robot, because the simulator is only an
+approximation of reality \cite{zhao2020sim, peng2018dynamics}. Zhao et al.\ \cite{zhao2020sim}
+divide this \emph{reality gap} into mismatches in sensing, such as camera behaviour, and in
+actuation and dynamics, such as friction, mass and latency. This study uses \emph{zero-shot
+transfer}: the policy runs on the real robot without any further training.
+
+Domain randomisation varies the simulator's parameters during training, so that the range of
+conditions the policy sees is wide enough to include the real world \cite{tobin2017domain}.
+\emph{Dynamics randomisation} varies physical parameters such as friction and actuator delay
+\cite{peng2018dynamics}, and \emph{observation randomisation} varies what the sensors report,
+for example by adding noise or dropping readings. Too much randomisation can harm rather than
+help real-world performance \cite{zhao2020sim}, so this study sets the ranges from measurements
+of the real robot where possible (Section~\ref{sec:methodology}).
+
+\subsection{Photogrammetry}
+Photogrammetry reconstructs a textured 3D model of a real space from many overlapping
+photographs, by matching the same visual features across images taken from different viewpoints
+and working out their 3D positions \cite{alhamadah2024photogrammetry}. The resulting mesh can be
+imported into a robot simulator. Alhamadah et al.\ \cite{alhamadah2024photogrammetry} show that
+consumer devices such as smartphones can produce such models with a mean dimensional error of
+about 5\%.
+
+\subsection{The Pepper Robot and ROS~2}
+Pepper is a wheeled humanoid service robot made by SoftBank Robotics and widely used in research
+\cite{pandey2018pepper, sekkat2024pepper}. Its hardware is too fragile for repeated real-world
+training, so simulation is needed \cite{sekkat2024pepper}. Its depth camera has a narrow field
+of view, and its visual localisation drifts over distance and is sensitive to lighting
+\cite{gomez2018visual}, which is why this study uses depth images and a single room. The robot is
+connected to the policy through ROS~2 \cite{macenski2022ros2}, whose named data channels
+(topics) are used in the same way in the Gazebo simulator \cite{koenig2004gazebo} and on the real
+Pepper, so the policy's inputs and outputs stay identical across the transfer.

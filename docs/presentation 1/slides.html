@@ -1,0 +1,1438 @@
+<title>Pepper Sim2Real — Progress Review</title>
+
+<style>
+  /* ───────────────────────────── tokens ───────────────────────────── */
+  :root {
+    --font-sans: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system,
+                 "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas,
+                 "Liberation Mono", Menlo, monospace;
+
+    --bg:        #EDF0F2;
+    --surface:   #FFFFFF;
+    --surface-2: #F6F8F9;
+    --ink:       #131A20;
+    --ink-2:     #46545F;
+    --ink-3:     #7C8A94;
+    --line:      #D3DAE0;
+    --line-2:    #E4E9ED;
+
+    --sim:       #2A7F9E;
+    --sim-soft:  #DCEDF3;
+    --real:      #B4653A;
+    --real-soft: #F5E3D8;
+
+    --done:      #3F7D57;
+    --done-soft: #DFEDE4;
+    --active:    #B07B18;
+    --active-soft:#F7EBD2;
+    --todo:      #9AA6AE;
+    --todo-soft: #E7EBEE;
+
+    --shadow: 0 1px 2px rgba(19,26,32,.06), 0 8px 24px rgba(19,26,32,.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:        #0E141A;
+      --surface:   #161E26;
+      --surface-2: #1B242D;
+      --ink:       #E6ECF0;
+      --ink-2:     #A2B0BA;
+      --ink-3:     #6C7C87;
+      --line:      #26313B;
+      --line-2:    #1F2831;
+
+      --sim:       #5CB8D8;
+      --sim-soft:  #16303C;
+      --real:      #D9895A;
+      --real-soft: #33231A;
+
+      --done:      #6FBF8C;
+      --done-soft: #16291F;
+      --active:    #E0B252;
+      --active-soft:#2C2413;
+      --todo:      #5C6A74;
+      --todo-soft: #1C242B;
+
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+    }
+  }
+
+  :root[data-theme="light"] {
+    --bg:#EDF0F2; --surface:#FFFFFF; --surface-2:#F6F8F9;
+    --ink:#131A20; --ink-2:#46545F; --ink-3:#7C8A94;
+    --line:#D3DAE0; --line-2:#E4E9ED;
+    --sim:#2A7F9E; --sim-soft:#DCEDF3; --real:#B4653A; --real-soft:#F5E3D8;
+    --done:#3F7D57; --done-soft:#DFEDE4; --active:#B07B18; --active-soft:#F7EBD2;
+    --todo:#9AA6AE; --todo-soft:#E7EBEE;
+    --shadow: 0 1px 2px rgba(19,26,32,.06), 0 8px 24px rgba(19,26,32,.05);
+  }
+
+  :root[data-theme="dark"] {
+    --bg:#0E141A; --surface:#161E26; --surface-2:#1B242D;
+    --ink:#E6ECF0; --ink-2:#A2B0BA; --ink-3:#6C7C87;
+    --line:#26313B; --line-2:#1F2831;
+    --sim:#5CB8D8; --sim-soft:#16303C; --real:#D9895A; --real-soft:#33231A;
+    --done:#6FBF8C; --done-soft:#16291F; --active:#E0B252; --active-soft:#2C2413;
+    --todo:#5C6A74; --todo-soft:#1C242B;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+  }
+
+  /* ───────────────────────────── shell ───────────────────────────── */
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    overflow: hidden;
+  }
+
+  .pd-viewport {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+  }
+
+  .pd-stage {
+    width: 1280px;
+    height: 720px;
+    position: relative;
+    transform-origin: center center;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+
+  .pd-slide {
+    position: absolute;
+    inset: 0;
+    padding: 54px 72px 76px;
+    display: none;
+    flex-direction: column;
+  }
+  .pd-slide.is-active { display: flex; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .pd-slide.is-active { animation: pd-in .22s ease-out both; }
+    @keyframes pd-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  }
+
+  /* ───────────────────────────── rail ───────────────────────────── */
+  .pd-rail {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 44px;
+    padding: 0 72px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    border-top: 1px solid var(--line-2);
+    background: var(--surface);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .pd-rail-title { color: var(--ink-2); }
+  .pd-rail-spacer { flex: 1; }
+  .pd-rail-count { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+
+  .pd-progress {
+    position: absolute;
+    left: 0; bottom: 0;
+    height: 2px;
+    background: var(--sim);
+    transition: width .22s ease-out;
+  }
+
+  /* ───────────────────────────── type ───────────────────────────── */
+  .pd-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--sim);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .pd-eyebrow::before {
+    content: "";
+    width: 22px; height: 3px;
+    background: var(--sim);
+    flex: none;
+  }
+  .pd-eyebrow.is-real { color: var(--real); }
+  .pd-eyebrow.is-real::before { background: var(--real); }
+
+  h1.pd-h1 {
+    font-size: 60px;
+    line-height: 1.02;
+    letter-spacing: -.028em;
+    font-weight: 700;
+    text-wrap: balance;
+  }
+  h2.pd-h2 {
+    font-size: 38px;
+    line-height: 1.08;
+    letter-spacing: -.022em;
+    font-weight: 700;
+    text-wrap: balance;
+    margin-bottom: 8px;
+  }
+  .pd-lede {
+    font-size: 18px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    max-width: 66ch;
+  }
+  .pd-body { font-size: 15px; line-height: 1.55; color: var(--ink-2); }
+  .pd-small { font-size: 13px; line-height: 1.5; color: var(--ink-3); }
+
+  code, .pd-mono {
+    font-family: var(--font-mono);
+    font-size: .92em;
+    color: var(--ink);
+  }
+  .pd-slide code {
+    background: var(--surface-2);
+    border: 1px solid var(--line-2);
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+
+  .pd-content { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 20px; }
+
+  /* ───────────────────────────── title slide ───────────────────────────── */
+  .pd-title-slide { justify-content: center; }
+  .pd-title-meta {
+    margin-top: 40px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    gap: 44px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: .06em;
+    color: var(--ink-3);
+  }
+  .pd-title-meta b { display: block; color: var(--ink); font-weight: 500; margin-top: 5px; letter-spacing: 0; }
+
+  /* TF-axis glyph: three bars in the RViz X/Y/Z convention. Structural, not decorative —
+     coordinate frames are the substrate the whole system is built on. */
+  .pd-tf { display: inline-flex; gap: 3px; vertical-align: middle; }
+  .pd-tf i { display: block; width: 4px; height: 16px; }
+  .pd-tf i:nth-child(1) { background: #C0503F; }
+  .pd-tf i:nth-child(2) { background: #4E8F4B; }
+  .pd-tf i:nth-child(3) { background: #3B6FA8; }
+
+  /* ───────────────────────────── pipeline ───────────────────────────── */
+  .pd-pipe { display: flex; align-items: stretch; gap: 0; margin-top: 4px; }
+  .pd-pipe-node {
+    flex: 1;
+    padding: 16px 12px;
+    border: 1px solid var(--line);
+    border-right: none;
+    background: var(--surface-2);
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    position: relative;
+  }
+  .pd-pipe-node:last-child { border-right: 1px solid var(--line); }
+  .pd-pipe-node .n {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+    color: var(--ink-3);
+  }
+  .pd-pipe-node .t {
+    font-size: 14px;
+    font-weight: 650;
+    line-height: 1.2;
+    letter-spacing: -.01em;
+    color: var(--ink);
+  }
+  .pd-pipe-node::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    height: 3px;
+  }
+  .pd-pipe-node.k-real { background: var(--real-soft); }
+  .pd-pipe-node.k-real::after { background: var(--real); }
+  .pd-pipe-node.k-real .t { color: var(--real); }
+  .pd-pipe-node.k-sim  { background: var(--sim-soft); }
+  .pd-pipe-node.k-sim::after { background: var(--sim); }
+  .pd-pipe-node.k-sim .t { color: var(--sim); }
+
+  .pd-pipe-bands { display: flex; margin-top: 10px; gap: 4px; }
+  .pd-band {
+    padding: 6px 12px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    text-align: center;
+  }
+  .pd-band.k-real { background: var(--real-soft); color: var(--real); }
+  .pd-band.k-sim  { background: var(--sim-soft);  color: var(--sim); }
+
+  .pd-callout {
+    margin-top: 18px;
+    padding: 16px 20px;
+    border-left: 3px solid var(--sim);
+    background: var(--surface-2);
+  }
+  .pd-callout .q {
+    font-size: 19px;
+    line-height: 1.4;
+    color: var(--ink);
+    font-weight: 600;
+    letter-spacing: -.012em;
+  }
+
+  /* ───────────────────────────── architecture ───────────────────────────── */
+  .pd-arch { display: grid; grid-template-columns: 1fr 148px 1fr; gap: 0; align-items: stretch; }
+  .pd-arch-col {
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .pd-arch-col h3 {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .pd-arch-item {
+    padding: 9px 11px;
+    background: var(--surface);
+    border: 1px solid var(--line-2);
+    font-size: 13px;
+    line-height: 1.35;
+    color: var(--ink);
+  }
+  .pd-arch-item .s {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--ink-3);
+    margin-top: 3px;
+  }
+  .pd-arch-item.is-future { border-style: dashed; background: transparent; color: var(--ink-3); }
+
+  .pd-bridge {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    padding: 12px 10px;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    background: var(--sim-soft);
+  }
+  .pd-bridge .lbl {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--sim);
+    text-align: center;
+    margin-bottom: 3px;
+  }
+  .pd-topic {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--ink-2);
+    text-align: center;
+    padding: 2px 0;
+  }
+  .pd-topic.is-missing { color: var(--real); text-decoration: line-through; }
+
+  /* ───────────────────────────── phase tracker ───────────────────────────── */
+  .pd-phases { display: flex; flex-direction: column; gap: 5px; }
+  .pd-phase {
+    display: grid;
+    grid-template-columns: 62px 1fr 138px;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 14px;
+    border-left: 3px solid var(--todo);
+    background: var(--surface-2);
+  }
+  .pd-phase .num {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    color: var(--ink-3);
+  }
+  .pd-phase .name { font-size: 14.5px; color: var(--ink); font-weight: 550; }
+  .pd-phase .name em { font-style: normal; color: var(--ink-3); font-weight: 400; }
+  .pd-phase .status {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    text-align: right;
+  }
+  .pd-phase.s-done   { border-left-color: var(--done);   background: var(--done-soft); }
+  .pd-phase.s-done   .status { color: var(--done); }
+  .pd-phase.s-active { border-left-color: var(--active); background: var(--active-soft); }
+  .pd-phase.s-active .status { color: var(--active); }
+  .pd-phase.s-todo   { border-left-color: var(--todo);   background: transparent; }
+  .pd-phase.s-todo   .status { color: var(--todo); }
+  .pd-phase.s-todo   .name { color: var(--ink-3); font-weight: 450; }
+
+  /* ───────────────────────────── generic cards / grids ───────────────────────────── */
+  .pd-grid { display: grid; gap: 12px; }
+  .pd-g2 { grid-template-columns: 1fr 1fr; }
+  .pd-g3 { grid-template-columns: repeat(3, 1fr); }
+  .pd-g4 { grid-template-columns: repeat(4, 1fr); }
+
+  .pd-card {
+    padding: 15px 17px;
+    background: var(--surface-2);
+    border: 1px solid var(--line-2);
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .pd-card h3 {
+    font-size: 15px;
+    font-weight: 650;
+    letter-spacing: -.01em;
+    color: var(--ink);
+    line-height: 1.25;
+  }
+  .pd-card p { font-size: 13px; line-height: 1.45; color: var(--ink-2); }
+  .pd-card .k {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  ul.pd-list { list-style: none; display: flex; flex-direction: column; gap: 7px; }
+  ul.pd-list li {
+    font-size: 14px;
+    line-height: 1.45;
+    color: var(--ink-2);
+    padding-left: 17px;
+    position: relative;
+  }
+  ul.pd-list li::before {
+    content: "";
+    position: absolute;
+    left: 0; top: .55em;
+    width: 7px; height: 1px;
+    background: var(--sim);
+  }
+  ul.pd-list li b { color: var(--ink); font-weight: 650; }
+
+  /* ───────────────────────────── the port (slide 8) ───────────────────────────── */
+  .pd-fixes { display: flex; flex-direction: column; gap: 7px; }
+  .pd-fix {
+    display: grid;
+    grid-template-columns: 168px 1fr;
+    gap: 18px;
+    align-items: baseline;
+    padding: 10px 14px;
+    background: var(--surface-2);
+    border-left: 3px solid var(--sim);
+  }
+  .pd-fix .cls {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--sim);
+  }
+  .pd-fix .what { font-size: 13.5px; line-height: 1.45; color: var(--ink-2); }
+  .pd-fix .what b { color: var(--ink); font-weight: 650; }
+  .pd-fix .what code { font-size: 12px; }
+
+  .pd-stat-row { display: flex; gap: 0; border: 1px solid var(--line); }
+  .pd-stat {
+    flex: 1;
+    padding: 12px 16px;
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .pd-stat:last-child { border-right: none; }
+  .pd-stat .v {
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em;
+  }
+  .pd-stat .l {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .pd-stat.is-good .v { color: var(--done); }
+
+  /* ───────────────────────────── terminal ───────────────────────────── */
+  .pd-term {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    padding: 14px 18px;
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+    line-height: 1.7;
+    overflow-x: auto;
+  }
+  .pd-term .p { color: var(--sim); }
+  .pd-term .c { color: var(--ink); }
+  .pd-term .o { color: var(--ink-3); }
+  .pd-term .warn { color: var(--real); }
+  .pd-term .ok { color: var(--done); }
+
+  /* ───────────────────────────── demo slide ───────────────────────────── */
+  .pd-panel { display: none; flex-direction: column; gap: 14px; flex: 1; min-height: 0; }
+  .pd-panel.is-shown { display: flex; }
+
+  /* Captured fallback for the live demo. Same graceful-degradation pattern as checkpoint.html:
+     the clip is transparent until a frame actually decodes, so a missing or unplayable file
+     falls back to the caption underneath rather than an empty box. */
+  .pd-video {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .pd-video .miss {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--ink-3);
+    text-align: center;
+  }
+  .pd-video video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: transparent;
+  }
+  .pd-video.is-ready video { background: var(--surface-2); }
+  .pd-video.is-ready .miss { display: none; }
+  .pd-video-tag {
+    position: absolute;
+    left: 0; bottom: 0;
+    z-index: 2;
+    padding: 5px 11px;
+    background: var(--sim);
+    color: #FFF;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+  }
+  @media (prefers-color-scheme: dark) { .pd-video-tag { color: #0E141A; } }
+  :root[data-theme="dark"]  .pd-video-tag { color: #0E141A; }
+  :root[data-theme="light"] .pd-video-tag { color: #FFF; }
+
+  .pd-hint {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .08em;
+    color: var(--ink-3);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .pd-key {
+    display: inline-block;
+    padding: 2px 7px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink-2);
+    font-size: 10px;
+    border-radius: 3px;
+  }
+
+  .pd-abort {
+    padding: 11px 16px;
+    background: var(--real-soft);
+    border-left: 3px solid var(--real);
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--ink-2);
+  }
+  .pd-abort b { color: var(--real); font-weight: 700; }
+
+  /* ───────────────────────────── risks ───────────────────────────── */
+  .pd-risk {
+    display: grid;
+    grid-template-columns: 88px 1fr;
+    gap: 16px;
+    padding: 12px 15px;
+    background: var(--surface-2);
+    border-left: 3px solid var(--real);
+  }
+  .pd-risk.is-minor { border-left-color: var(--todo); }
+  .pd-risk .sev {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--real);
+    padding-top: 2px;
+  }
+  .pd-risk.is-minor .sev { color: var(--todo); }
+  .pd-risk .txt { font-size: 13.5px; line-height: 1.45; color: var(--ink-2); }
+  .pd-risk .txt b { color: var(--ink); font-weight: 650; }
+
+  /* ───────────────────────────── tree ───────────────────────────── */
+  .pd-tree {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.85;
+    color: var(--ink-2);
+  }
+  .pd-tree .dim { color: var(--ink-3); }
+  .pd-tree .empty { color: var(--todo); }
+  .pd-tree .full { color: var(--done); }
+  .pd-tree .tag {
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    padding: 1px 6px;
+    margin-left: 8px;
+  }
+  .pd-tree .tag.t-empty { background: var(--todo-soft); color: var(--todo); }
+  .pd-tree .tag.t-full  { background: var(--done-soft); color: var(--done); }
+
+  /* ───────────────────────────── roadmap ───────────────────────────── */
+  .pd-road { display: flex; flex-direction: column; gap: 6px; }
+  .pd-road-item {
+    display: grid;
+    grid-template-columns: 74px 190px 1fr;
+    gap: 18px;
+    align-items: baseline;
+    padding: 9px 14px;
+    background: var(--surface-2);
+    border-left: 3px solid var(--line);
+  }
+  .pd-road-item.is-next { border-left-color: var(--active); background: var(--active-soft); }
+  .pd-road-item .when {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .08em;
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .pd-road-item.is-next .when { color: var(--active); }
+  .pd-road-item .ph { font-size: 14px; font-weight: 650; color: var(--ink); letter-spacing: -.01em; }
+  .pd-road-item .del { font-size: 13px; color: var(--ink-2); line-height: 1.4; }
+
+  /* ───────────────────────────── asks ───────────────────────────── */
+  .pd-ask {
+    padding: 16px 18px;
+    background: var(--surface-2);
+    border-top: 3px solid var(--real);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .pd-ask h3 { font-size: 15px; font-weight: 650; color: var(--ink); letter-spacing: -.01em; }
+  .pd-ask p { font-size: 13px; line-height: 1.45; color: var(--ink-2); }
+
+  /* ───────────────────────────── table ───────────────────────────── */
+  .pd-table-wrap { overflow-x: auto; }
+  table.pd-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.pd-table th {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  table.pd-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line-2);
+    color: var(--ink-2);
+    vertical-align: top;
+  }
+  table.pd-table td.mono { font-family: var(--font-mono); font-size: 12px; color: var(--ink); }
+  table.pd-table tr:last-child td { border-bottom: none; }
+
+  /* ───────────────────────────── help overlay ───────────────────────────── */
+  .pd-help {
+    position: absolute;
+    inset: 0;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+  }
+  .pd-help.is-shown { display: flex; }
+  .pd-help-inner {
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    padding: 30px 38px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 420px;
+  }
+  .pd-help-inner h3 {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--sim);
+    margin-bottom: 6px;
+  }
+  .pd-help-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 40px;
+    font-size: 13.5px;
+    color: var(--ink-2);
+  }
+  .pd-help-row span:first-child { font-family: var(--font-mono); font-size: 12px; color: var(--ink); }
+
+  :focus-visible { outline: 2px solid var(--sim); outline-offset: 2px; }
+</style>
+
+<div class="pd-viewport">
+  <div class="pd-stage" id="pd-stage" tabindex="0">
+
+    <!-- ══════════════ 1 · TITLE ══════════════ -->
+    <section class="pd-slide pd-title-slide" data-rail="Title">
+      <div class="pd-eyebrow">MSc Research &nbsp;·&nbsp; Progress Review</div>
+      <h1 class="pd-h1">Closing the sim-to-real gap<br>for the Pepper humanoid</h1>
+      <p class="pd-lede" style="margin-top:20px;">
+        A photogrammetry-grounded digital twin as the training ground for
+        reinforcement-learned navigation — built on ROS&nbsp;2 Humble and Ignition Gazebo.
+      </p>
+      <div class="pd-title-meta">
+        <div>Presenter<b>Jaishil Patel</b></div>
+        <div>Date<b>July 2026</b></div>
+        <div>Status<b>Phases 1–3 complete · Phase 4 in progress</b></div>
+        <div>Scope of this talk<b>Implementation &amp; roadmap</b></div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 2 · THE GOAL ══════════════ -->
+    <section class="pd-slide" data-rail="The goal">
+      <div class="pd-eyebrow">Where this is going</div>
+      <h2 class="pd-h2">Reality in, reality out — simulation is the middle</h2>
+      <div class="pd-content">
+        <div class="pd-pipe">
+          <div class="pd-pipe-node k-real"><span class="n">01</span><span class="t">Real room</span></div>
+          <div class="pd-pipe-node k-real"><span class="n">02</span><span class="t">Photogrammetry</span></div>
+          <div class="pd-pipe-node k-sim"><span class="n">03</span><span class="t">3D mesh</span></div>
+          <div class="pd-pipe-node k-sim"><span class="n">04</span><span class="t">Gazebo world</span></div>
+          <div class="pd-pipe-node k-sim"><span class="n">05</span><span class="t">Pepper model</span></div>
+          <div class="pd-pipe-node k-sim"><span class="n">06</span><span class="t">ROS 2 graph</span></div>
+          <div class="pd-pipe-node k-sim"><span class="n">07</span><span class="t">SAC policy</span></div>
+          <div class="pd-pipe-node k-real"><span class="n">08</span><span class="t">Physical Pepper</span></div>
+        </div>
+        <div class="pd-pipe-bands">
+          <div class="pd-band k-real" style="flex:2;">Capture the real</div>
+          <div class="pd-band k-sim" style="flex:5;">Train in simulation</div>
+          <div class="pd-band k-real" style="flex:1;">Deploy to the real</div>
+        </div>
+        <div class="pd-callout">
+          <div class="q">Can a photogrammetry-reconstructed digital twin of the deployment
+          environment measurably narrow the sim-to-real gap for Pepper's navigation policy?</div>
+          <p class="pd-small" style="margin-top:9px;">
+            The bet: policies trained in a world reconstructed from the actual room transfer better
+            than policies trained in a generic one. Everything in this talk exists to make that
+            comparison possible.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 3 · ARCHITECTURE ══════════════ -->
+    <section class="pd-slide" data-rail="Architecture">
+      <div class="pd-eyebrow">Target system</div>
+      <h2 class="pd-h2">Runtime architecture</h2>
+      <div class="pd-content">
+        <div class="pd-arch">
+          <div class="pd-arch-col">
+            <h3>Simulation side</h3>
+            <div class="pd-arch-item">Ignition Gazebo Fortress<span class="s">physics · rendering · sensors</span></div>
+            <div class="pd-arch-item">Pepper SDF + meshes<span class="s">pepper_robot_description</span></div>
+            <div class="pd-arch-item">ign_ros2_control<span class="s">6 trajectory controllers @ 250 Hz</span></div>
+            <div class="pd-arch-item is-future">Photogrammetry world<span class="s">phase 6 — not built</span></div>
+          </div>
+
+          <div class="pd-bridge">
+            <div class="lbl">ros_ign_bridge</div>
+            <div class="pd-topic">/clock</div>
+            <div class="pd-topic">/joint_states</div>
+            <div class="pd-topic">/joint_trajectory</div>
+            <div class="pd-topic">/odom · /tf</div>
+            <div class="pd-topic">/cmd_vel</div>
+            <div class="pd-topic is-missing">/scan</div>
+          </div>
+
+          <div class="pd-arch-col">
+            <h3>ROS 2 Humble side</h3>
+            <div class="pd-arch-item">MoveIt 2 move_group<span class="s">OMPL planning · servo</span></div>
+            <div class="pd-arch-item is-future">Gym environment wrapper<span class="s">phase 7 — not built</span></div>
+            <div class="pd-arch-item is-future">SAC agent<span class="s">phase 8 — not built</span></div>
+            <div class="pd-arch-item is-future">NAOqi bridge → physical Pepper<span class="s">phase 9 — not built</span></div>
+          </div>
+        </div>
+        <p class="pd-body">
+          Solid boxes exist and build today. Dashed boxes are the thesis contribution and are not
+          written yet. <b style="color:var(--real);">/scan</b> is struck through deliberately —
+          the model declares laser frames but no simulated sensor publishes on them. That single
+          gap gates the entire RL phase, and it is the subject of slide 11.
+        </p>
+      </div>
+    </section>
+
+    <!-- ══════════════ 4 · WHERE I AM ══════════════ -->
+    <section class="pd-slide" data-rail="Status">
+      <div class="pd-eyebrow">Honest position</div>
+      <h2 class="pd-h2">Three of nine phases complete</h2>
+      <div class="pd-content">
+        <div class="pd-phases">
+          <div class="pd-phase s-done">   <span class="num">Phase 1</span><span class="name">Environment &amp; toolchain <em>— Ubuntu 22.04, WSL2, ROS 2 Humble</em></span><span class="status">Complete</span></div>
+          <div class="pd-phase s-done">   <span class="num">Phase 2</span><span class="name">ROS 2 fundamentals <em>— packages, nodes, the ROS graph</em></span><span class="status">Complete</span></div>
+          <div class="pd-phase s-done">   <span class="num">Phase 3</span><span class="name">Pepper simulation stack <em>— selected, ported, building</em></span><span class="status">Complete</span></div>
+          <div class="pd-phase s-active"> <span class="num">Phase 4</span><span class="name">Launch in Gazebo <em>— TF, sensors, robot control</em></span><span class="status">In progress</span></div>
+          <div class="pd-phase s-todo">   <span class="num">Phase 5</span><span class="name">Navigation environment <em>— worlds, obstacles, goals</em></span><span class="status">Not started</span></div>
+          <div class="pd-phase s-todo">   <span class="num">Phase 6</span><span class="name">Photogrammetry import <em>— scale, align, validate</em></span><span class="status">Not started</span></div>
+          <div class="pd-phase s-todo">   <span class="num">Phase 7</span><span class="name">RL environment wrapper <em>— observations, actions, rewards</em></span><span class="status">Not started</span></div>
+          <div class="pd-phase s-todo">   <span class="num">Phase 8</span><span class="name">SAC training <em>— tuning, domain randomization</em></span><span class="status">Not started</span></div>
+          <div class="pd-phase s-todo">   <span class="num">Phase 9</span><span class="name">Physical deployment <em>— sim2real metrics vs. baseline</em></span><span class="status">Not started</span></div>
+        </div>
+        <p class="pd-small">
+          Phases 1–3 are infrastructure and de-risking. Phases 5–9 are the research contribution.
+          Nothing in the second group has been started, and I want that stated plainly up front
+          rather than discovered in questions.
+        </p>
+      </div>
+    </section>
+
+    <!-- ══════════════ 5 · TOOLCHAIN ══════════════ -->
+    <section class="pd-slide" data-rail="Toolchain">
+      <div class="pd-eyebrow">Phase 1 · complete</div>
+      <h2 class="pd-h2">A reproducible research environment</h2>
+      <div class="pd-content">
+        <div class="pd-grid pd-g3">
+          <div class="pd-card">
+            <span class="k">Host</span>
+            <h3>Ubuntu 22.04 on WSL2</h3>
+            <p>Linux-native ROS tooling on Windows hardware, with WSLg for GPU-accelerated
+            Gazebo rendering — no dual boot, no VM overhead.</p>
+          </div>
+          <div class="pd-card">
+            <span class="k">Middleware</span>
+            <h3>ROS 2 Humble</h3>
+            <p>The current LTS. Chosen over Galactic (EOL) despite most Pepper packages
+            targeting Galactic — that mismatch is the work on slide 8.</p>
+          </div>
+          <div class="pd-card">
+            <span class="k">Simulator</span>
+            <h3>Ignition Gazebo Fortress</h3>
+            <p>Pairs with Humble, and is what the Pepper digital-twin stack was authored
+            against. Successor to Gazebo Classic.</p>
+          </div>
+        </div>
+        <div class="pd-grid pd-g3">
+          <div class="pd-card">
+            <span class="k">Build</span>
+            <h3>colcon workspace</h3>
+            <p><code>ros2_ws/</code> with <code>--merge-install --symlink-install</code>,
+            Release build type. Dependencies pulled by <code>vcstool</code> and <code>rosdep</code>.</p>
+          </div>
+          <div class="pd-card">
+            <span class="k">Tooling</span>
+            <h3>VS Code Remote + git</h3>
+            <p>Editing on Windows, executing in Linux, one filesystem. Version control on
+            the workspace, not on generated artefacts.</p>
+          </div>
+          <div class="pd-card">
+            <span class="k">Why it matters</span>
+            <h3>Portability of results</h3>
+            <p>A sim2real claim is only meaningful if the simulation is reproducible.
+            Pinning the stack now is what makes the Phase 9 comparison defensible.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 6 · ROS FUNDAMENTALS ══════════════ -->
+    <section class="pd-slide" data-rail="ROS 2 fundamentals">
+      <div class="pd-eyebrow">Phase 2 · complete</div>
+      <h2 class="pd-h2">Learning the graph on a toy, to debug it on the robot</h2>
+      <div class="pd-content" style="gap:16px;">
+        <div class="pd-grid pd-g2" style="align-items:start;">
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            <p class="pd-body">
+              <code>hello_ros</code> is a minimal package — a publisher pushing
+              <code>std_msgs/String</code> onto <code>/greetings</code> at 1 Hz, and a matching
+              subscriber. The package is not the point. The introspection vocabulary is.
+            </p>
+            <ul class="pd-list">
+              <li><b>ros2 node info</b> — what a node publishes, subscribes, and serves</li>
+              <li><b>ros2 topic hz</b> — is the sensor actually running at rate?</li>
+              <li><b>ros2 topic echo</b> — is the message content sane?</li>
+              <li><b>ros2 topic type</b> — do the two ends agree on the interface?</li>
+            </ul>
+            <p class="pd-body">
+              These are the same four commands I use on the next slides to answer
+              "is Pepper publishing odometry", "is the bridge alive", "is my RL node
+              actually reaching Gazebo".
+            </p>
+          </div>
+          <div class="pd-term">
+            <div><span class="p">$</span> <span class="c">ros2 node list</span></div>
+            <div><span class="o">/greeting_publisher</span></div>
+            <div><span class="o">/greeting_subscriber</span></div>
+            <div style="height:10px;"></div>
+            <div><span class="p">$</span> <span class="c">ros2 topic hz /greetings</span></div>
+            <div><span class="o">average rate: 1.000</span></div>
+            <div style="height:10px;"></div>
+            <div><span class="p">$</span> <span class="c">ros2 topic type /greetings</span></div>
+            <div><span class="o">std_msgs/msg/String</span></div>
+            <div style="height:10px;"></div>
+            <div class="o"># later, the same commands on:</div>
+            <div class="o"># /scan  /odom  /cmd_vel  /joint_states</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 7 · STACK SELECTION ══════════════ -->
+    <section class="pd-slide" data-rail="Stack selection">
+      <div class="pd-eyebrow">Phase 3 · decision</div>
+      <h2 class="pd-h2">Choosing a Pepper stack was a research decision, not a download</h2>
+      <div class="pd-content" style="gap:16px;">
+        <p class="pd-body" style="max-width:none;">
+          Pepper's open-source ecosystem is fragmented: most packages are ROS 1 only, several target
+          Gazebo Classic, and many are unmaintained. Committing to the wrong one costs a mid-project
+          migration. I evaluated against four criteria before writing any code on top.
+        </p>
+        <div class="pd-grid pd-g4">
+          <div class="pd-card">
+            <span class="k">Criterion 01</span>
+            <h3>ROS 2 native</h3>
+            <p>No ROS 1 bridge in the loop — it would sit between the policy and the robot in exactly the place latency matters.</p>
+          </div>
+          <div class="pd-card">
+            <span class="k">Criterion 02</span>
+            <h3>Simulation-first</h3>
+            <p>A full physics-capable model with collision geometry and controllers, not just a visual URDF.</p>
+          </div>
+          <div class="pd-card">
+            <span class="k">Criterion 03</span>
+            <h3>Path to hardware</h3>
+            <p>A credible route to the physical Pepper, so Phase 9 is not a rewrite.</p>
+          </div>
+          <div class="pd-card">
+            <span class="k">Criterion 04</span>
+            <h3>Provenance</h3>
+            <p>Maintained, and ideally validated in the literature rather than an unreviewed hobby port.</p>
+          </div>
+        </div>
+        <div class="pd-callout">
+          <div class="q">Selected: <span class="pd-mono" style="font-size:.9em;">pepper_ign_moveit2</span> — the Pepper open-source digital twin</div>
+          <p class="pd-small" style="margin-top:8px;">
+            Sekkat, Moutik, El Kari, Chaibi, Tchakoucht &amp; El Hilali (2024).
+            <em>Beyond simulation: unlocking the frontiers of humanoid robot capability and
+            intelligence with Pepper's open-source digital twin.</em> Heliyon 10(14).
+            Ignition Gazebo + MoveIt 2 + ros2_control, peer-reviewed — with one catch, next slide.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 8 · THE PORT ══════════════ -->
+    <section class="pd-slide" data-rail="The port">
+      <div class="pd-eyebrow">Phase 3 · the actual engineering</div>
+      <h2 class="pd-h2">Porting the stack: Galactic&nbsp;+&nbsp;Docker → Humble&nbsp;+&nbsp;WSL2</h2>
+      <div class="pd-content" style="gap:14px;">
+        <p class="pd-body" style="max-width:none;">
+          The upstream repository targets ROS 2 Galactic inside a Docker container with an NVIDIA
+          GPU. I run Humble on WSL2. It did not build, and when it did, the model was wrong.
+          Five distinct classes of defect:
+        </p>
+        <div class="pd-fixes">
+          <div class="pd-fix">
+            <span class="cls">Missing inertia</span>
+            <span class="what"><b>l_gripper</b> and <b>r_gripper</b> links carried no <code>&lt;inertial&gt;</code> block — physics rejects massless dynamic links. Added mass 1e-5, inertia 1e-35.</span>
+          </div>
+          <div class="pd-fix">
+            <span class="cls">Mirrored joints</span>
+            <span class="what">Sign errors on the right arm: <code>RShoulderRoll</code> 0.17 → −0.17 and <code>RElbowRoll</code> −0.17 → 0.17. The robot spawned in a physically impossible pose.</span>
+          </div>
+          <div class="pd-fix">
+            <span class="cls">Xacro API drift</span>
+            <span class="what"><code>load_yaml(...)</code> → <code>xacro.load_yaml(...)</code> in the ros2_control macro — the function moved between Galactic and Humble.</span>
+          </div>
+          <div class="pd-fix">
+            <span class="cls">Container paths</span>
+            <span class="what">The <code>ign_ros2_control</code> plugin hardcoded its <code>&lt;parameters&gt;</code> path to <code>/root/ws/...</code>, valid only inside the author's Docker image. Repointed to the local workspace.</span>
+          </div>
+          <div class="pd-fix">
+            <span class="cls">WSL2 graphics</span>
+            <span class="what">Added <code>/dev/dxg</code> detection, <code>/mnt/wslg</code> mounts and <code>WAYLAND_DISPLAY</code> passthrough for GPU rendering; replaced a mesh symlink that Windows could not resolve.</span>
+          </div>
+        </div>
+        <div class="pd-stat-row">
+          <div class="pd-stat"><span class="v">24</span><span class="l">files changed</span></div>
+          <div class="pd-stat"><span class="v">+178 / −25</span><span class="l">lines</span></div>
+          <div class="pd-stat"><span class="v">4</span><span class="l">packages built</span></div>
+          <div class="pd-stat is-good"><span class="v">rc = 0</span><span class="l">colcon · 2026-07-06</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 9 · WHAT THE STACK GIVES ME ══════════════ -->
+    <section class="pd-slide" data-rail="The substrate">
+      <div class="pd-eyebrow">Phase 3 · outcome</div>
+      <h2 class="pd-h2">What I can now build on</h2>
+      <div class="pd-content">
+        <div class="pd-grid pd-g3">
+          <div class="pd-card">
+            <span class="k">Kinematics</span>
+            <h3>Full xacro chain</h3>
+            <p>Arms, head, legs, wheels, torso, fingers and sensor frames, generating both URDF and
+            SDF at build time — plus ~50 STL collision and ~50 DAE visual meshes.</p>
+          </div>
+          <div class="pd-card">
+            <span class="k">Control</span>
+            <h3>6 trajectory controllers</h3>
+            <p>Head, torso, left/right arm, left/right hand — with a joint state broadcaster at
+            250 Hz, over <code>ign_ros2_control</code>. DiffDrive and PosePublisher plugins on the base.</p>
+          </div>
+          <div class="pd-card">
+            <span class="k">Planning</span>
+            <h3>MoveIt 2, configured</h3>
+            <p>OMPL planning pipeline, kinematics solver, joint limits and servo config already
+            tuned for Pepper's arms — I did not have to author an SRDF.</p>
+          </div>
+          <div class="pd-card">
+            <span class="k">Integration</span>
+            <h3>Gazebo ↔ ROS bridge</h3>
+            <p>A parameterised bridge covering clock, joint states, trajectories, odometry, TF
+            and <code>cmd_vel</code> — the exact seam the RL node will plug into.</p>
+          </div>
+          <div class="pd-card">
+            <span class="k">Entry points</span>
+            <h3>Three launch modes</h3>
+            <p><code>gz.launch.py</code> for full simulation, <code>fake.launch.py</code> for mock
+            hardware in RViz alone, <code>view.launch.py</code> to inspect the model.</p>
+          </div>
+          <div class="pd-card">
+            <span class="k">Proof of life</span>
+            <h3>A working demo</h3>
+            <p><code>ex_follow_target.py</code> — drag a target in Gazebo and the arm plans to it
+            through MoveIt 2. An end-to-end path from GUI to controller.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 10 · LIVE DEMO ══════════════ -->
+    <section class="pd-slide" data-rail="Live demo" data-demo="1">
+      <div class="pd-eyebrow">Demonstration</div>
+      <h2 class="pd-h2">Pepper, in Ignition Gazebo</h2>
+
+      <div class="pd-panel is-shown" id="pd-demo-live">
+        <div class="pd-content" style="gap:14px;">
+          <div class="pd-term" style="font-size:16px;line-height:2;">
+            <div><span class="p">$</span> <span class="c">ros2 launch pepper_robot gz.launch.py</span></div>
+            <div><span class="p">$</span> <span class="c">ros2 topic list</span> <span class="o">&nbsp;&nbsp;# /joint_states · /cmd_vel · /clock … and no /scan</span></div>
+            <div><span class="p">$</span> <span class="c">ros2 control list_controllers</span> <span class="o">&nbsp;&nbsp;# 6 active + broadcaster</span></div>
+          </div>
+          <div class="pd-grid pd-g3">
+            <div class="pd-card">
+              <span class="k">Watch for 01</span>
+              <h3>The model spawns intact</h3>
+              <p>Arms in a plausible rest pose — that is the mirrored-joint fix from slide 8, visible.</p>
+            </div>
+            <div class="pd-card">
+              <span class="k">Watch for 02</span>
+              <h3>Topics cross the bridge</h3>
+              <p>Gazebo and the ROS graph are genuinely connected, not two processes side by side.</p>
+            </div>
+            <div class="pd-card">
+              <span class="k">Watch for 03</span>
+              <h3>No <code>/scan</code></h3>
+              <p>The absence is the point. It is the next slide, and the gate on the whole RL phase.</p>
+            </div>
+          </div>
+          <div class="pd-abort">
+            <b>Abort rule —</b> if it is not up in 60 seconds, switch to captures and move on.
+            The failure mode is itself the Galactic→Humble risk on the next slide, so either
+            outcome carries the talk forward. Do not debug in front of the room.
+          </div>
+        </div>
+        <div class="pd-hint"><span class="pd-key">G</span> switch to captured fallback</div>
+      </div>
+
+      <div class="pd-panel" id="pd-demo-fallback">
+        <div class="pd-video">
+          <p class="miss">
+            media/ready.mp4<br>
+            <span style="font-size:11px;">Pepper waving, then driving,<br>in Ignition Gazebo</span>
+          </p>
+          <video src="media/ready.mp4" muted loop playsinline></video>
+          <span class="pd-video-tag">Recorded in Ignition Gazebo</span>
+        </div>
+        <div class="pd-hint"><span class="pd-key">G</span> back to live demo</div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 11 · RISKS ══════════════ -->
+    <section class="pd-slide" data-rail="Open risks">
+      <div class="pd-eyebrow is-real">Named before you ask</div>
+      <h2 class="pd-h2">Four open technical risks</h2>
+      <div class="pd-content">
+        <div style="display:flex;flex-direction:column;gap:9px;">
+          <div class="pd-risk">
+            <span class="sev">Blocking</span>
+            <span class="txt"><b>The robot has no simulated sensors.</b> <code>pepper_robot.gazebo</code>
+            declares laser, camera, sonar and IMU positions as TF <em>frames</em>, but contains no
+            <code>&lt;sensor&gt;</code> elements — so nothing publishes. My observation space depends on
+            <code>/scan</code>. Adding simulated sensors is a prerequisite for Phase 7, not a detail,
+            and it is now the first item on the roadmap.</span>
+          </div>
+          <div class="pd-risk">
+            <span class="sev">Active</span>
+            <span class="txt"><b>Dependencies pinned to Galactic branches.</b>
+            <code>ros_ign</code>, <code>gz_ros2_control</code> and <code>ros2_controllers</code> are all
+            checked out on Galactic refs while the workspace runs Humble. It compiles; runtime
+            behaviour is what I am validating this week.</span>
+          </div>
+          <div class="pd-risk is-minor">
+            <span class="sev">Watch</span>
+            <span class="txt"><b>Pepper's base is omnidirectional; the plugin is DiffDrive.</b>
+            A differential-drive model cannot express lateral motion. If the action space is
+            (v<sub>x</sub>, v<sub>y</sub>, ω), the base plugin has to change — which alters what
+            transfers to hardware.</span>
+          </div>
+          <div class="pd-risk is-minor">
+            <span class="sev">Watch</span>
+            <span class="txt"><b>One world file exists.</b> Only <code>follow_target.sdf</code>, an
+            arm-manipulation scene. Navigation worlds are Phase 5 and the photogrammetry world is
+            Phase 6 — neither exists yet.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 12 · SCAFFOLDING ══════════════ -->
+    <section class="pd-slide" data-rail="What isn't built">
+      <div class="pd-eyebrow">Plainly</div>
+      <h2 class="pd-h2">The contribution directories are still empty</h2>
+      <div class="pd-content">
+        <div class="pd-grid pd-g2" style="align-items:start;">
+          <div class="pd-tree">
+            <div>pepper-sim2real/</div>
+            <div><span class="dim">├──</span> <span class="full">ros2_ws/</span><span class="tag t-full">built · 4 pkgs</span></div>
+            <div><span class="dim">├──</span> <span class="full">docs/</span><span class="tag t-full">roadmap</span></div>
+            <div><span class="dim">├──</span> <span class="empty">rl/</span><span class="tag t-empty">0 files</span></div>
+            <div><span class="dim">│&nbsp;&nbsp; ├──</span> <span class="empty">env/</span></div>
+            <div><span class="dim">│&nbsp;&nbsp; ├──</span> <span class="empty">models/</span></div>
+            <div><span class="dim">│&nbsp;&nbsp; ├──</span> <span class="empty">scripts/</span></div>
+            <div><span class="dim">│&nbsp;&nbsp; └──</span> <span class="empty">config/</span></div>
+            <div><span class="dim">├──</span> <span class="empty">simulation/</span><span class="tag t-empty">0 files</span></div>
+            <div><span class="dim">│&nbsp;&nbsp; ├──</span> <span class="empty">worlds/</span></div>
+            <div><span class="dim">│&nbsp;&nbsp; ├──</span> <span class="empty">models/</span></div>
+            <div><span class="dim">│&nbsp;&nbsp; ├──</span> <span class="empty">pepper/</span></div>
+            <div><span class="dim">│&nbsp;&nbsp; └──</span> <span class="empty">photogrammetry/</span></div>
+            <div><span class="dim">├──</span> <span class="empty">notebooks/</span><span class="tag t-empty">0 files</span></div>
+            <div><span class="dim">└──</span> <span class="empty">assets/</span><span class="tag t-empty">0 files</span></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:14px;">
+            <p class="pd-body">
+              The scaffolding is deliberate — it mirrors Phases 6 through 8 — but it is empty, and
+              I would rather say so than imply otherwise. Concretely, as of today there is:
+            </p>
+            <ul class="pd-list">
+              <li>no reinforcement learning code, no <code>train.py</code>, no SAC agent</li>
+              <li>no Gym environment, no defined observation, action or reward</li>
+              <li>no photogrammetry capture and no reconstructed mesh</li>
+              <li>no experiments run — no checkpoints, rosbags, logs or plots anywhere</li>
+              <li>no NAOqi interface to the physical robot</li>
+            </ul>
+            <p class="pd-body">
+              What exists is the platform those things need. The argument of this talk is that
+              the platform was the expensive part to get right, not that the research is done.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 13 · ROADMAP ══════════════ -->
+    <section class="pd-slide" data-rail="Roadmap">
+      <div class="pd-eyebrow">Next</div>
+      <h2 class="pd-h2">Roadmap, with one deliverable per phase</h2>
+      <div class="pd-content">
+        <div class="pd-road">
+          <div class="pd-road-item is-next">
+            <span class="when">This week</span><span class="ph">4 · Gazebo runtime</span>
+            <span class="del">Verified TF tree and all six controllers active under Humble, then <code>&lt;sensor&gt;</code> elements added so <code>/scan</code> publishes.</span>
+          </div>
+          <div class="pd-road-item">
+            <span class="when">Aug</span><span class="ph">5 · Navigation world</span>
+            <span class="del">A hand-built obstacle world plus a goal-sampling node — the baseline environment the photogrammetry world will be compared against.</span>
+          </div>
+          <div class="pd-road-item">
+            <span class="when">Sep</span><span class="ph">6 · Photogrammetry</span>
+            <span class="del">Capture the real room, reconstruct, scale and align the mesh, and validate dimensional error against tape measurements.</span>
+          </div>
+          <div class="pd-road-item">
+            <span class="when">Oct</span><span class="ph">7 · RL environment</span>
+            <span class="del">A Gymnasium wrapper over the ROS 2 graph: observation = scan + relative goal + odometry, action = <code>cmd_vel</code>, reward = progress − collision − time.</span>
+          </div>
+          <div class="pd-road-item">
+            <span class="when">Nov–Dec</span><span class="ph">8 · SAC training</span>
+            <span class="del">Train in both worlds, with domain randomization over friction, latency and sensor noise. Learning curves and success rates.</span>
+          </div>
+          <div class="pd-road-item">
+            <span class="when">Jan</span><span class="ph">9 · Sim2real</span>
+            <span class="del">Deploy both policies to the physical Pepper in the real room and measure the transfer gap — the thesis result.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 14 · ASKS ══════════════ -->
+    <section class="pd-slide" data-rail="Asks">
+      <div class="pd-eyebrow is-real">What I need</div>
+      <h2 class="pd-h2">Four things I need decided</h2>
+      <div class="pd-content">
+        <div class="pd-grid pd-g2">
+          <div class="pd-ask">
+            <h3>Physical Pepper access</h3>
+            <p>When can I book time with the robot, and for how long? Phase 9 needs repeated runs in
+            the same room, not a single session. Knowing the constraint now shapes how I design the
+            evaluation.</p>
+          </div>
+          <div class="pd-ask">
+            <h3>Photogrammetry capture</h3>
+            <p>Which room are we committing to, can it be booked and kept static, and what capture
+            equipment is available? The room is the independent variable of the whole study.</p>
+          </div>
+          <div class="pd-ask">
+            <h3>Compute for training</h3>
+            <p>SAC over a physics simulator is expensive. Is there lab or cluster GPU time, or should
+            I design the experiment around a single workstation?</p>
+          </div>
+          <div class="pd-ask">
+            <h3>The evaluation metric</h3>
+            <p>I would like agreement now on what "closing the gap" means — success rate, path
+            efficiency, collision count, or a composite. Fixing it before training avoids choosing
+            the metric that flatters the result.</p>
+          </div>
+        </div>
+        <p class="pd-small">Appendix slides follow with package versions, launch commands and the full phase list.</p>
+      </div>
+    </section>
+
+    <!-- ══════════════ 15 · APPENDIX: PACKAGES ══════════════ -->
+    <section class="pd-slide" data-rail="Appendix · packages">
+      <div class="pd-eyebrow">Appendix</div>
+      <h2 class="pd-h2">Workspace inventory</h2>
+      <div class="pd-content">
+        <div class="pd-table-wrap">
+          <table class="pd-table">
+            <thead>
+              <tr><th>Package</th><th>Origin</th><th>Ref</th><th>Role</th></tr>
+            </thead>
+            <tbody>
+              <tr><td class="mono">pepper_robot</td><td>HibaSekkat/pepper_ign_moveit2</td><td class="mono">master</td><td>Metapackage; runs xacro → URDF/SDF/SRDF at build</td></tr>
+              <tr><td class="mono">pepper_robot_description</td><td>same</td><td class="mono">master</td><td>URDF/SDF, meshes, initial joint positions</td></tr>
+              <tr><td class="mono">pepper_robot_ign</td><td>same</td><td class="mono">master</td><td>Gazebo config, ros_ign bridge, examples</td></tr>
+              <tr><td class="mono">pepper_robot_moveit_config</td><td>same</td><td class="mono">master</td><td>SRDF, OMPL, kinematics, controllers, servo</td></tr>
+              <tr><td class="mono">pymoveit2</td><td>AndrejOrsula/pymoveit2</td><td class="mono">3.0.0</td><td>Python MoveIt 2 interface</td></tr>
+              <tr><td class="mono">ros_ign</td><td>gazebosim/ros_gz</td><td class="mono">galactic</td><td>Gazebo ↔ ROS 2 bridge</td></tr>
+              <tr><td class="mono">gz_ros2_control</td><td>ros-controls/gz_ros2_control</td><td class="mono">galactic</td><td>ros2_control plugin inside Gazebo</td></tr>
+              <tr><td class="mono">ros2_controllers</td><td>AndrejOrsula/ros2_controllers</td><td class="mono">jtc_effort</td><td>Effort-mode joint trajectory controller</td></tr>
+              <tr><td class="mono">hello_ros</td><td>authored</td><td class="mono">—</td><td>Phase 2 publisher/subscriber</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="pd-small">The three <code>galactic</code> refs are risk 2 on slide 11.</p>
+      </div>
+    </section>
+
+    <!-- ══════════════ 16 · APPENDIX: COMMANDS ══════════════ -->
+    <section class="pd-slide" data-rail="Appendix · commands">
+      <div class="pd-eyebrow">Appendix</div>
+      <h2 class="pd-h2">Reproducing this</h2>
+      <div class="pd-content">
+        <div class="pd-term">
+          <div class="o"># build</div>
+          <div><span class="p">$</span> <span class="c">cd ~/Research/pepper-sim2real/ros2_ws</span></div>
+          <div><span class="p">$</span> <span class="c">colcon build --merge-install --symlink-install \</span></div>
+          <div><span class="c">&nbsp;&nbsp;&nbsp;&nbsp;--cmake-args "-DCMAKE_BUILD_TYPE=Release"</span></div>
+          <div><span class="p">$</span> <span class="c">source install/local_setup.bash</span></div>
+          <div style="height:12px;"></div>
+          <div class="o"># full simulation</div>
+          <div><span class="p">$</span> <span class="c">ros2 launch pepper_robot gz.launch.py</span></div>
+          <div style="height:12px;"></div>
+          <div class="o"># mock hardware, RViz only — no Gazebo</div>
+          <div><span class="p">$</span> <span class="c">ros2 launch pepper_robot fake.launch.py</span></div>
+          <div style="height:12px;"></div>
+          <div class="o"># inspect the model</div>
+          <div><span class="p">$</span> <span class="c">ros2 launch pepper_robot_description view.launch.py</span></div>
+          <div style="height:12px;"></div>
+          <div class="o"># arm-following demo</div>
+          <div><span class="p">$</span> <span class="c">ros2 launch pepper_robot_ign ex_py_follow_target.launch.py</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ 17 · CLOSING ══════════════ -->
+    <section class="pd-slide pd-title-slide" data-rail="End">
+      <div class="pd-eyebrow">Summary</div>
+      <h1 class="pd-h1" style="font-size:46px;">The platform is built.<br>The research starts now.</h1>
+      <p class="pd-lede" style="margin-top:20px;">
+        A validated Pepper digital twin, ported to a current LTS stack and building clean —
+        with one known gap, simulated sensors, standing between here and the first trained policy.
+      </p>
+      <div class="pd-title-meta">
+        <div>Complete<b>Phases 1 – 3</b></div>
+        <div>In progress<b>Phase 4 · Gazebo runtime</b></div>
+        <div>Next deliverable<b>/scan publishing from a simulated laser</b></div>
+        <div>Thesis result<b>Phase 9 · sim2real transfer gap</b></div>
+      </div>
+      <p class="pd-small" style="margin-top:28px;">Questions — and the four asks on slide 14.</p>
+    </section>
+
+    <!-- ══════════════ rail + help ══════════════ -->
+    <div class="pd-rail">
+      <span class="pd-tf" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="pd-rail-title" id="pd-rail-title">Title</span>
+      <span class="pd-rail-spacer"></span>
+      <span>Pepper Sim2Real</span>
+      <span class="pd-rail-count" id="pd-rail-count">01 / 17</span>
+      <div class="pd-progress" id="pd-progress"></div>
+    </div>
+
+    <div class="pd-help" id="pd-help">
+      <div class="pd-help-inner">
+        <h3>Keyboard</h3>
+        <div class="pd-help-row"><span>→ &nbsp; space</span><span>next slide</span></div>
+        <div class="pd-help-row"><span>←</span><span>previous slide</span></div>
+        <div class="pd-help-row"><span>home / end</span><span>first / last slide</span></div>
+        <div class="pd-help-row"><span>g</span><span>toggle demo fallback (slide 10)</span></div>
+        <div class="pd-help-row"><span>f</span><span>fullscreen</span></div>
+        <div class="pd-help-row"><span>?</span><span>close this</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  var stage    = document.getElementById('pd-stage');
+  var slides   = Array.prototype.slice.call(document.querySelectorAll('.pd-slide'));
+  var railName = document.getElementById('pd-rail-title');
+  var railCnt  = document.getElementById('pd-rail-count');
+  var progress = document.getElementById('pd-progress');
+  var help     = document.getElementById('pd-help');
+  var live     = document.getElementById('pd-demo-live');
+  var fallback = document.getElementById('pd-demo-fallback');
+  var clip     = fallback.querySelector('video');
+  var index    = 0;
+
+  // Only treat the clip as present once a frame has decoded; until then the caption stands in.
+  clip.addEventListener('loadeddata', function () { clip.parentNode.classList.add('is-ready'); });
+
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+  // The fallback panel is hidden by default, so the clip is driven from here rather than
+  // autoplaying — it starts from the top each time the panel is shown, and stops when it is not
+  // on screen so it is never playing invisibly behind another slide.
+  function syncClip() {
+    if (fallback.classList.contains('is-shown') && slides[index].hasAttribute('data-demo')) {
+      clip.currentTime = 0;
+      var p = clip.play();
+      if (p && p.catch) { p.catch(function () {}); }
+    } else {
+      clip.pause();
+    }
+  }
+
+  function show(i) {
+    index = Math.max(0, Math.min(slides.length - 1, i));
+    slides.forEach(function (s, n) { s.classList.toggle('is-active', n === index); });
+    railName.textContent = slides[index].getAttribute('data-rail') || '';
+    railCnt.textContent  = pad(index + 1) + ' / ' + pad(slides.length);
+    progress.style.width = ((index + 1) / slides.length * 100) + '%';
+    syncClip();
+  }
+
+  function toggleDemo() {
+    if (!slides[index].hasAttribute('data-demo')) return;
+    live.classList.toggle('is-shown');
+    fallback.classList.toggle('is-shown');
+    syncClip();
+  }
+
+  function fit() {
+    var scale = Math.min(window.innerWidth / 1280, window.innerHeight / 720);
+    stage.style.transform = 'scale(' + scale + ')';
+  }
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); show(index + 1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp')                { e.preventDefault(); show(index - 1); }
+    else if (e.key === 'Home')                                           { e.preventDefault(); show(0); }
+    else if (e.key === 'End')                                            { e.preventDefault(); show(slides.length - 1); }
+    else if (e.key === 'g' || e.key === 'G')                             { toggleDemo(); }
+    else if (e.key === '?' || e.key === '/')                             { help.classList.toggle('is-shown'); }
+    else if (e.key === 'Escape')                                         { help.classList.remove('is-shown'); }
+    else if (e.key === 'f' || e.key === 'F') {
+      if (document.fullscreenElement) { document.exitFullscreen(); }
+      else if (document.documentElement.requestFullscreen) { document.documentElement.requestFullscreen(); }
+    }
+  });
+
+  stage.addEventListener('click', function (e) {
+    if (help.classList.contains('is-shown')) { help.classList.remove('is-shown'); return; }
+    var rect = stage.getBoundingClientRect();
+    show(index + ((e.clientX - rect.left) < rect.width * 0.25 ? -1 : 1));
+  });
+
+  window.addEventListener('resize', fit);
+  fit();
+  show(0);
+  stage.focus();
+})();
+</script>

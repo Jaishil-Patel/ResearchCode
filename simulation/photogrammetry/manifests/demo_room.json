@@ -1,0 +1,171 @@
+{
+  "room": "demo_room",
+  "generated": "2026-08-23T17:31:23",
+  "tool": "tools/mesh_import.py",
+  "source": {
+    "path": "/home/jaishil/Research/pepper-sim2real/simulation/photogrammetry/raw/demo_room/demo_room.obj",
+    "sha256": "3b68bf84fe31d8361bc8fe359dd0117b1152abe5595fe2db177e5658b81b78a1",
+    "bytes": 3074718,
+    "converted": null
+  },
+  "arguments": {
+    "room": "demo_room",
+    "input": null,
+    "texture_max": 2048,
+    "output": null,
+    "work": null,
+    "manifest": null,
+    "model_name": "room_photogrammetry",
+    "inspect": false,
+    "up": "z",
+    "yaw": null,
+    "no_align": false,
+    "scale": 1.0,
+    "origin_mode": "floor-centre",
+    "origin": null,
+    "flip_normals": "auto",
+    "visual_faces": 50000,
+    "collision_faces": 5000,
+    "collision_max_z": 2.0,
+    "min_component_area": 0.001,
+    "component_margin": 0.05,
+    "component_percentile": 1.0,
+    "max_filter_loss": 0.4,
+    "allow_aggressive_filter": false,
+    "mu": 1.0,
+    "mu2": 1.0,
+    "blender": null,
+    "no_blender": false,
+    "allow_uv_loss": false
+  },
+  "transform_row_major": [
+    0.99956755,
+    0.029405991,
+    0.0,
+    0.169517911,
+    -0.029405991,
+    0.99956755,
+    0.0,
+    -0.117083878,
+    0.0,
+    0.0,
+    1.0,
+    2.963895818,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+  ],
+  "normals_inward_fraction": 0.8891,
+  "normals_flipped": false,
+  "stages": {
+    "raw": {
+      "faces": 27262,
+      "vertices": 81774,
+      "bounds_min": [
+        -4.6346,
+        -6.8147,
+        -3.099
+      ],
+      "bounds_max": [
+        4.6346,
+        7.1186,
+        3.1002
+      ],
+      "extents": [
+        9.2691,
+        13.9333,
+        6.1992
+      ],
+      "area": 157.519
+    },
+    "cleaned": {
+      "faces": 23126,
+      "vertices": 14951,
+      "bounds_min": [
+        -4.6346,
+        -6.8147,
+        -3.0586
+      ],
+      "bounds_max": [
+        4.3152,
+        7.1186,
+        3.1002
+      ],
+      "extents": [
+        8.9497,
+        13.9333,
+        6.1588
+      ],
+      "area": 147.871
+    },
+    "components_dropped_outside": 2,
+    "components_dropped_small": 352,
+    "aligned": {
+      "faces": 23126,
+      "vertices": 14951,
+      "bounds_min": [
+        -4.5131,
+        -6.9721,
+        -0.0947
+      ],
+      "bounds_max": [
+        4.5131,
+        6.9721,
+        6.0641
+      ],
+      "extents": [
+        9.0262,
+        13.9442,
+        6.1588
+      ],
+      "area": 147.871
+    },
+    "visual": {
+      "faces": 27255,
+      "vertices": 78681,
+      "bounds_min": [
+        -4.5131,
+        -6.9721,
+        -0.1351
+      ],
+      "bounds_max": [
+        4.5131,
+        6.9721,
+        6.0641
+      ],
+      "extents": [
+        9.0262,
+        13.9442,
+        6.1992
+      ],
+      "area": 157.502,
+      "backend": "blender"
+    },
+    "collision": {
+      "faces": 4999,
+      "vertices": 3158,
+      "bounds_min": [
+        -4.5092,
+        -6.947,
+        -0.0935
+      ],
+      "bounds_max": [
+        4.4386,
+        6.972,
+        2.1436
+      ],
+      "extents": [
+        8.9478,
+        13.919,
+        2.237
+      ],
+      "area": 70.986
+    }
+  },
+  "outputs": {
+    "model_dir": "/home/jaishil/Research/pepper-sim2real/ros2_ws/src/pepper_room_description/models/room_photogrammetry",
+    "visual": "/home/jaishil/Research/pepper-sim2real/ros2_ws/src/pepper_room_description/models/room_photogrammetry/meshes/visual/room.obj",
+    "collision": "/home/jaishil/Research/pepper-sim2real/ros2_ws/src/pepper_room_description/models/room_photogrammetry/meshes/collision/room_collision.stl"
+  }
+}

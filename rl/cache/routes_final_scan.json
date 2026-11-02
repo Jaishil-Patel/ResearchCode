@@ -1,0 +1,286 @@
+{
+  "room": "final_scan",
+  "variant": null,
+  "source_path": "simulation/photogrammetry/ground_truth/final_scan_spec.yaml",
+  "fingerprint": "598aca8d88cc01e6",
+  "params": {
+    "res": 0.05,
+    "radius": 0.28,
+    "clearance": 0.12,
+    "robot_height": 1.2
+  },
+  "goal": {
+    "xy": [
+      3.75,
+      1.1
+    ],
+    "radius_m": 0.6
+  },
+  "n_routes": 20,
+  "routes": [
+    {
+      "route_id": "r000",
+      "start": [
+        1.4501,
+        1.6929
+      ],
+      "start_yaw": -2.9306,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 1.8743
+    },
+    {
+      "route_id": "r001",
+      "start": [
+        2.4365,
+        2.9088
+      ],
+      "start_yaw": 2.2819,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 1.7349
+    },
+    {
+      "route_id": "r002",
+      "start": [
+        1.015,
+        1.0211
+      ],
+      "start_yaw": -2.9637,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 2.1914
+    },
+    {
+      "route_id": "r003",
+      "start": [
+        1.8562,
+        2.3835
+      ],
+      "start_yaw": 0.9248,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 2.0571
+    },
+    {
+      "route_id": "r004",
+      "start": [
+        1.099,
+        2.5843
+      ],
+      "start_yaw": 0.9454,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 2.6471
+    },
+    {
+      "route_id": "r005",
+      "start": [
+        1.9694,
+        2.9568
+      ],
+      "start_yaw": 1.3917,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 2.1178
+    },
+    {
+      "route_id": "r006",
+      "start": [
+        1.7179,
+        2.2286
+      ],
+      "start_yaw": -1.1192,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 1.9692
+    },
+    {
+      "route_id": "r007",
+      "start": [
+        5.1169,
+        2.7196
+      ],
+      "start_yaw": 2.4522,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 2.0364
+    },
+    {
+      "route_id": "r008",
+      "start": [
+        1.0614,
+        2.5312
+      ],
+      "start_yaw": -2.6137,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 2.6263
+    },
+    {
+      "route_id": "r009",
+      "start": [
+        1.7394,
+        1.912
+      ],
+      "start_yaw": 2.3655,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 1.7278
+    },
+    {
+      "route_id": "r010",
+      "start": [
+        0.7529,
+        2.9668
+      ],
+      "start_yaw": -2.1974,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 3.1127
+    },
+    {
+      "route_id": "r011",
+      "start": [
+        0.7398,
+        3.0115
+      ],
+      "start_yaw": -2.8147,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 3.1835
+    },
+    {
+      "route_id": "r012",
+      "start": [
+        1.8202,
+        2.1099
+      ],
+      "start_yaw": -2.5714,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 1.8278
+    },
+    {
+      "route_id": "r013",
+      "start": [
+        1.4707,
+        1.5867
+      ],
+      "start_yaw": 1.3266,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 1.8328
+    },
+    {
+      "route_id": "r014",
+      "start": [
+        1.9466,
+        2.8557
+      ],
+      "start_yaw": 1.4389,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 2.1263
+    },
+    {
+      "route_id": "r015",
+      "start": [
+        4.0984,
+        3.2007
+      ],
+      "start_yaw": 2.2848,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 1.6328
+    },
+    {
+      "route_id": "r016",
+      "start": [
+        4.1991,
+        3.1479
+      ],
+      "start_yaw": -2.2069,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 1.5743
+    },
+    {
+      "route_id": "r017",
+      "start": [
+        0.8945,
+        2.3411
+      ],
+      "start_yaw": -0.1257,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 2.7435
+    },
+    {
+      "route_id": "r018",
+      "start": [
+        1.4633,
+        1.3769
+      ],
+      "start_yaw": -0.3597,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 1.75
+    },
+    {
+      "route_id": "r019",
+      "start": [
+        2.1807,
+        2.9014
+      ],
+      "start_yaw": 1.3774,
+      "goal": [
+        3.75,
+        1.1
+      ],
+      "optimal_length_m": 1.8971
+    }
+  ],
+  "starts_clear_of": {
+    "mesh": "ros2_ws/src/pepper_room_description/models/room_photogrammetry/meshes/collision/room_collision.stl",
+    "sha256_16": "a247a492b01059b2"
+  }
+}

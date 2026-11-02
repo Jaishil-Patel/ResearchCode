@@ -1,0 +1,16 @@
+\section{Future Work}\label{sec:future}
+Several extensions would strengthen and extend these results:
+\begin{itemize}
+\item \textbf{Robustness test.} A natural next step is a perturbed version of the room, with the bag
+and the green pole moved and ten new routes. It would show whether the photogrammetry policy also
+copes better when the room no longer matches its scan.
+\item \textbf{Position tracking and more trials.} An overhead camera or motion-capture system would
+remove the dependence only on odometry. More real sessions, and more than one deployed policy per
+branch, would narrow the confidence intervals.
+\item \textbf{Collision protection.} Many real failures happened when NAOqi's collision protection
+held the robot in front of the couch or the bag. Modelling this behaviour in simulation, or training
+with it, would remove the largest source of failure.
+\item \textbf{Other rooms and reconstructions.} Repeating the comparison in several rooms, and with
+newer reconstruction methods such as Gaussian splatting \cite{chhablani2025embodiedsplat}, would
+show how general the benefit of a reconstructed simulator is.
+\end{itemize}

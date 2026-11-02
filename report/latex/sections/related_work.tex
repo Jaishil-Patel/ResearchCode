@@ -1,0 +1,46 @@
+\section{Related Work}\label{sec:related}
+In their survey of sim-to-real methods, Zhao et al.\ \cite{zhao2020sim} identify domain
+randomisation as the most widely used and note that navigation has received much less attention
+than manipulation. Broadly, earlier work narrows the gap from one of two directions: making the
+policy robust to the mismatch that remains, or making the simulator a more faithful copy of
+reality. This study combines both.
+
+\subsection{Making the Policy Robust}
+Tobin et al.\ \cite{tobin2017domain} introduce domain randomisation by varying the visual
+appearance of simulated scenes, and Peng et al.\ \cite{peng2018dynamics} show that randomising
+the dynamics of a simple simulator can work better than carefully building a detailed one. For
+navigation, Chaffre et al.\ \cite{chaffre2020sim} train a depth-based policy with SAC and
+deploy it on a real wheeled robot, doubling the real-world success rate of a naive baseline to
+47\%. Their training environment, however, is a generic Gazebo world, not a model of the room
+the robot is deployed in.
+
+\subsection{Making the Simulator Realistic}
+Liu et al.\ \cite{liu2020rsr} build a simplified simulation of a real scene from its semantic
+layout, train a navigation policy in it and transfer it back, reaching 83\% real-world
+success against 61\% for plain domain randomisation and 15\% for direct transfer. This shows
+that grounding the simulator in the real scene helps, although their reconstruction is an
+abstract layout rather than a realistic model. Photogrammetry can provide such a model: Guerra et
+al.\ \cite{guerra2019flightgoggles} use it to render realistic camera images for drones, and
+note that it is still uncommon in robot simulation, where general-purpose simulators such as
+Gazebo \cite{koenig2004gazebo} are not designed for realistic rendering. Habitat
+\cite{savva2019habitat} trains navigation agents in 3D-scanned indoor scenes and evaluates them
+with the SPL metric of Anderson et al.\ \cite{anderson2018evaluation}, also used in this study.
+More recent work reconstructs real scenes with neural radiance fields or Gaussian splatting and
+trains policies inside them \cite{byravan2022nerf2real, shen2024driveenv,
+chhablani2025embodiedsplat}. Closest to this study, Chhablani et al.\
+\cite{chhablani2025embodiedsplat} reconstruct scenes captured with a mobile phone, train
+navigation agents in them and report a strong correlation between simulated and real
+performance, although for a different robot and reconstruction method.
+
+What these studies do not isolate is the contribution of the reconstruction itself. They
+compare a realistic simulator against domain randomisation or against no simulator, not against
+a simulator of the \emph{same} room built by hand to the same measurements. This study makes
+that comparison.
+
+\subsection{Work on Pepper}
+G\'{o}mez et al.\ \cite{gomez2018visual} build a visual navigation system for Pepper but report
+drift and sensitivity to lighting. Sekkat et al.\ \cite{sekkat2024pepper} find existing Pepper
+simulators to be of low fidelity, closed-source and tied to the outdated ROS~1, and build an open
+ROS~2 digital twin, leaving learning-based control as future work. To our knowledge, no study has
+trained an RL navigation policy for Pepper in a photogrammetric reconstruction of its environment
+and tested whether the reconstruction improves transfer to the real robot.

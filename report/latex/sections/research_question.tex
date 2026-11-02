@@ -1,0 +1,13 @@
+\section{Research Question and Hypothesis}\label{sec:rq}
+\textbf{Problem.} Earlier work has shown that grounding a simulator in the real scene can improve
+transfer \cite{liu2020rsr, chhablani2025embodiedsplat}, but it has not isolated the contribution
+of the reconstruction itself.
+
+\textbf{Research question.} Does training Pepper in a photogrammetry-based simulation of a room
+improve its real-world navigation and reduce the sim-to-real gap, compared with a standard
+simulation of the same room built by hand?
+
+\textbf{Hypothesis.} Compared with a policy trained in the same way with SAC under domain
+randomisation in a standard simulation of the room, a policy trained in a photogrammetric
+reconstruction of that room will show (H1) a smaller sim-to-real gap and (H2) a higher
+real-world success rate.

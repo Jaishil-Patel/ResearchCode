@@ -1,0 +1,320 @@
+{
+  "room": "final_scan",
+  "generated": "2026-09-27T13:24:02",
+  "tool": "tools/mesh_import.py",
+  "source": {
+    "path": "/home/jaishil/Research/pepper-sim2real/simulation/photogrammetry/raw/final_scan/Final_scan.glb",
+    "sha256": "1b440424be832c0557048e6b045384018d71963fd9005e84427b13fe725f6195",
+    "bytes": 11752372,
+    "converted": "/home/jaishil/Research/pepper-sim2real/simulation/photogrammetry/work/final_scan/room.obj"
+  },
+  "arguments": {
+    "room": "final_scan",
+    "input": null,
+    "texture_max": 2048,
+    "output": null,
+    "work": null,
+    "manifest": null,
+    "model_name": "room_photogrammetry",
+    "inspect": false,
+    "up": "y",
+    "yaw": 177.91,
+    "no_align": false,
+    "scale": 1.0,
+    "origin_mode": "floor-min-corner",
+    "origin": "-2.785 -2.040 -1.798",
+    "flip_normals": "auto",
+    "fill_holes": false,
+    "fill_max_area": Infinity,
+    "smooth_iterations": 8,
+    "smooth_lambda": 0.5,
+    "smooth_mu": -0.53,
+    "pin_boundary": false,
+    "visual_faces": 50000,
+    "collision_faces": 50000,
+    "collision_max_z": 2.0,
+    "min_component_area": 0.001,
+    "component_margin": 0.05,
+    "component_percentile": 1.0,
+    "max_filter_loss": 0.4,
+    "allow_aggressive_filter": false,
+    "mu": 1.0,
+    "mu2": 1.0,
+    "blender": null,
+    "no_blender": false,
+    "allow_uv_loss": false
+  },
+  "transform_row_major": [
+    -0.999334774,
+    -0.0,
+    0.036469292,
+    2.785,
+    0.036469292,
+    -0.0,
+    0.999334774,
+    2.04,
+    0.0,
+    1.0,
+    0.0,
+    1.798,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+  ],
+  "normals_inward_fraction": 0.8843,
+  "normals_flipped": true,
+  "smoothing": {
+    "applied": true,
+    "algorithm": "taubin-umbrella",
+    "kernel": "tools/mesh_taubin.py",
+    "collision_leg": {
+      "iterations": 8,
+      "lambda": 0.5,
+      "mu": -0.53,
+      "pin_boundary": false,
+      "vertices": 38476,
+      "welded_vertices": 33599,
+      "pinned_vertices": 0,
+      "mean_displacement_m": 0.006127,
+      "max_displacement_m": 0.210507,
+      "aabb_before": [
+        6.0192,
+        4.8324,
+        3.7137
+      ],
+      "aabb_after": [
+        6.0116,
+        4.8283,
+        3.7087
+      ],
+      "aabb_drift_pct": [
+        -0.1249,
+        -0.0861,
+        -0.1355
+      ]
+    },
+    "visual_leg": {
+      "iterations": 8,
+      "lambda": 0.5,
+      "mu": -0.53,
+      "pin_boundary": false,
+      "vertices": 207341,
+      "welded_vertices": 39687,
+      "pinned_vertices": 0,
+      "mean_displacement_m": 0.004473,
+      "max_displacement_m": 0.163644,
+      "aabb_before": [
+        6.0192,
+        4.8324,
+        3.7137
+      ],
+      "aabb_after": [
+        6.0164,
+        4.8331,
+        3.7189
+      ],
+      "aabb_drift_pct": [
+        -0.0458,
+        0.0129,
+        0.1399
+      ]
+    }
+  },
+  "hole_filling": {
+    "applied": false
+  },
+  "stages": {
+    "raw": {
+      "faces": 79541,
+      "vertices": 207341,
+      "bounds_min": [
+        -2.8729,
+        -1.8516,
+        -2.3706
+      ],
+      "bounds_max": [
+        3.1296,
+        1.8621,
+        2.359
+      ],
+      "extents": [
+        6.0025,
+        3.7137,
+        4.7296
+      ],
+      "area": 138.543
+    },
+    "cleaned": {
+      "faces": 63240,
+      "vertices": 38476,
+      "bounds_min": [
+        -2.8729,
+        -1.8516,
+        -2.3706
+      ],
+      "bounds_max": [
+        3.1296,
+        1.8621,
+        2.359
+      ],
+      "extents": [
+        6.0025,
+        3.7137,
+        4.7296
+      ],
+      "area": 126.599
+    },
+    "components_dropped_outside": 1,
+    "components_dropped_small": 460,
+    "aligned": {
+      "faces": 63240,
+      "vertices": 38476,
+      "bounds_min": [
+        -0.3992,
+        -0.3325,
+        -0.0536
+      ],
+      "bounds_max": [
+        5.6199,
+        4.4999,
+        3.6601
+      ],
+      "extents": [
+        6.0192,
+        4.8324,
+        3.7137
+      ],
+      "area": 126.599
+    },
+    "smoothed": {
+      "faces": 63240,
+      "vertices": 38476,
+      "bounds_min": [
+        -0.3998,
+        -0.3295,
+        -0.0503
+      ],
+      "bounds_max": [
+        5.6119,
+        4.4988,
+        3.6584
+      ],
+      "extents": [
+        6.0116,
+        4.8283,
+        3.7087
+      ],
+      "area": 123.618
+    },
+    "visual": {
+      "faces": 50000,
+      "vertices": 148574,
+      "bounds_min": [
+        -0.3998,
+        -0.3307,
+        -0.0534
+      ],
+      "bounds_max": [
+        5.6179,
+        4.5023,
+        3.6684
+      ],
+      "extents": [
+        6.0177,
+        4.8331,
+        3.7218
+      ],
+      "area": 130.845,
+      "backend": "blender"
+    },
+    "collision": {
+      "faces": 40708,
+      "vertices": 24670,
+      "bounds_min": [
+        -0.2345,
+        -0.2744,
+        -0.0503
+      ],
+      "bounds_max": [
+        5.547,
+        4.4312,
+        2.2779
+      ],
+      "extents": [
+        5.7814,
+        4.7056,
+        2.3282
+      ],
+      "area": 70.142
+    }
+  },
+  "outputs": {
+    "model_dir": "/home/jaishil/Research/pepper-sim2real/ros2_ws/src/pepper_room_description/models/room_photogrammetry",
+    "visual": "/home/jaishil/Research/pepper-sim2real/ros2_ws/src/pepper_room_description/models/room_photogrammetry/meshes/visual/room.obj",
+    "collision": "/home/jaishil/Research/pepper-sim2real/ros2_ws/src/pepper_room_description/models/room_photogrammetry/meshes/collision/room_collision.stl"
+  },
+  "levelling": {
+    "tool": "tools/mesh_level.py",
+    "date": "2026-10-01",
+    "plane_before": {
+      "dz_dx": 0.021158844292498036,
+      "dz_dy": 0.022801790573888956,
+      "z0": -0.04770651401673606,
+      "tilt_deg": 1.7817003315203057,
+      "samples": 689
+    },
+    "tilt_after_deg": 0.00732496969329134,
+    "transform_row_major": [
+      [
+        0.999776313973047,
+        -0.00024105484545277727,
+        0.021148614872580497,
+        0.0010089266918533143
+      ],
+      [
+        -0.00024105484545277727,
+        0.9997402276784662,
+        0.022790766857875563,
+        0.0010872680385574042
+      ],
+      [
+        -0.021148614872580497,
+        -0.022790766857875563,
+        0.9995165416515132,
+        0.04768344990425746
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "applied_to": [
+      "ros2_ws/src/pepper_room_description/models/room_photogrammetry/meshes/collision/room_collision.stl",
+      "ros2_ws/src/pepper_room_description/models/room_photogrammetry/meshes/visual/room.obj",
+      "simulation/photogrammetry/ground_truth/final_scan.csv"
+    ]
+  },
+  "floor_flattening": {
+    "tool": "tools/mesh_flatten_floor.py",
+    "date": "2026-10-01",
+    "applied_to": "ros2_ws/src/pepper_room_description/models/room_photogrammetry/meshes/collision/room_collision.stl",
+    "floor_z_threshold_m": 0.12,
+    "vertices_snapped": 2883,
+    "vertices_total": 21891,
+    "underlay_plane": {
+      "z": -0.001,
+      "xy_min": [
+        -0.3,
+        -0.3
+      ],
+      "xy_max": [
+        5.8,
+        4.5
+      ]
+    },
+    "visual_mesh": "unchanged"
+  }
+}

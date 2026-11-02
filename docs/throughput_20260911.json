@@ -1,0 +1,28 @@
+[
+  {
+    "label": "throughput",
+    "world_name": "room_photogrammetry",
+    "world_path": "/home/jaishil/Research/pepper-sim2real/ros2_ws/src/pepper_room_description/worlds/room_photogrammetry.sdf",
+    "depth": true,
+    "lidar": true,
+    "rtf": 0.9910669662281334,
+    "steps_per_sec": 198.2133932456267,
+    "sim_elapsed": 44.795,
+    "real_elapsed": 45.19876206800001,
+    "sensors": [
+      [
+        "depth camera",
+        15,
+        14.99
+      ],
+      [
+        "front lidar",
+        10,
+        9.909
+      ]
+    ],
+    "control_hz_limit": 9.909,
+    "control_limited_by": "front lidar",
+    "measured_at": "2026-09-11T10:53:32"
+  }
+]

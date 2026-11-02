@@ -1,0 +1,26 @@
+\section{Limitations}\label{sec:limitations}
+The study has several limitations that affect how far its results can be generalised:
+\begin{itemize}
+\item \textbf{Scale of the evaluation.} The study uses one room, 20 routes and one real-robot
+session per policy, and only one trained policy from each branch is deployed. The samples are small,
+the confidence intervals on the real success rates are wide, and the results may not hold in other
+rooms. The 20 routes pair the two policies route by route, but they are not independent training
+runs, so the $p$-values describe these two selected policies on these routes. They do not show that
+photogrammetry-trained policies in general transfer better across training seeds.
+\item \textbf{Seed selection.} The deployed policy in each branch is the seed with the highest
+simulated SR on the same validation routes. Choosing the best of three seeds on these routes biases
+its simulated SR upwards, and therefore inflates $\Delta$, for both branches.
+\item \textbf{Position measurement.} No external tracking system is available. The robot's final
+position comes only from odometry estimates.
+\item \textbf{Robot conditions.} NAOqi's collision protection is kept on for safety and stops the
+robot near obstacles, which the policies never experience in training. The robot is controlled over
+Wi-Fi at 5\,Hz with a command delay of about 0.85\,s, and mass and centre of mass are not
+randomised.
+\item \textbf{Simulation fidelity.} The simulator runs in real time and is not deterministic, so
+repeated evaluations of the same policy differ and five sessions are needed. The scanned mesh has
+small cracks that leave gaps in the depth image, adding depth noise that the standard world lacks,
+so the effect of the room's shape cannot be fully separated from that of these artefacts. Its
+largest errors are on soft objects (up to 6.85\%). The room is static, with no people or moving
+objects. Depth readings closer than 0.4\,m are treated as far away, although, with the camera 1.1\,m
+above the floor, this only affects objects already touching the robot.
+\end{itemize}

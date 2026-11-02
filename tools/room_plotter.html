@@ -1,0 +1,836 @@
+<title>Room Plotter</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#eef1ec; --surface:#ffffff; --surface-2:#f4f6f2; --ink:#1e2b25; --ink-soft:#5b6a62;
+    --line:#c9d2c8; --accent:#e8622a; --accent-ink:#ffffff; --structure:#3a6ea5; --furniture:#8a6a4b;
+    --good:#3f8f5f; --warn:#a8701c; --danger:#c1442e; --hud-bg:rgba(255,255,255,.88); --radius:5px;
+    --shadow:0 1px 2px rgba(30,43,37,.08), 0 4px 12px rgba(30,43,37,.06);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0f2a44; --surface:#123453; --surface-2:#0d2c48; --ink:#eaf2fb; --ink-soft:#9db4c9;
+      --line:#24476b; --accent:#ff8a4c; --accent-ink:#1c1200; --structure:#7fb2e0; --furniture:#d3a97a;
+      --good:#6fcf97; --warn:#e0a94b; --danger:#ef6b58; --hud-bg:rgba(15,42,68,.85);
+      --shadow:0 1px 2px rgba(0,0,0,.35), 0 4px 16px rgba(0,0,0,.4);
+    }
+  }
+  
+  :root[data-theme="dark"]{
+    --bg:#0f2a44; --surface:#123453; --surface-2:#0d2c48; --ink:#eaf2fb; --ink-soft:#9db4c9;
+    --line:#24476b; --accent:#ff8a4c; --accent-ink:#1c1200; --structure:#7fb2e0; --furniture:#d3a97a;
+    --good:#6fcf97; --warn:#e0a94b; --danger:#ef6b58; --hud-bg:rgba(15,42,68,.85);
+    --shadow:0 1px 2px rgba(0,0,0,.35), 0 4px 16px rgba(0,0,0,.4);
+  }
+  *{box-sizing:border-box;}
+  body{background:var(--bg); color:var(--ink); font-family:'Work Sans',system-ui,sans-serif;}
+  h1,h2,h3{font-family:'Barlow Semi Condensed',Arial Narrow,sans-serif; font-weight:700; margin:0; text-wrap:balance;}
+  .wrap{max-width:1240px; margin:0 auto; padding:20px 16px 48px;}
+  header.top{display:flex; flex-wrap:wrap; gap:12px; align-items:baseline; justify-content:space-between; padding-block:6px 18px; border-bottom:2px solid var(--line); margin-bottom:18px;}
+  header.top .brand{display:flex; align-items:baseline; gap:10px;}
+  header.top h1{font-size:26px; letter-spacing:.01em;}
+  header.top .eyebrow{font-family:'IBM Plex Mono',monospace; font-size:11px; text-transform:uppercase; letter-spacing:.1em; color:var(--ink-soft);}
+  header.top p{margin:2px 0 0; color:var(--ink-soft); font-size:13.5px; max-width:52ch;}
+  .top-actions{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+
+  main.layout{display:grid; grid-template-columns:1fr; gap:18px;}
+  @media (min-width:900px){ main.layout{grid-template-columns:minmax(340px,420px) 1fr; align-items:start;} }
+
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:16px 16px 18px; box-shadow:var(--shadow);}
+  .card + .card{margin-top:14px;}
+  .card h2{font-size:15px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink);}
+  .card .step-no{font-family:'IBM Plex Mono',monospace; color:var(--accent); margin-right:8px;}
+  .card .hint{font-size:12.5px; color:var(--ink-soft); margin:6px 0 12px; line-height:1.45;}
+
+  label{display:block; font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-soft); font-weight:600; margin-bottom:4px;}
+  input,select{font-family:'IBM Plex Mono',ui-monospace,monospace; font-variant-numeric:tabular-nums; font-size:13px;
+    padding:7px 8px; border:1px solid var(--line); border-radius:4px; background:var(--surface-2); color:var(--ink); width:100%;}
+  input:focus,select:focus{outline:2px solid var(--structure); outline-offset:1px;}
+  .field-row{display:flex; gap:8px; flex-wrap:wrap;}
+  .field{flex:1 1 90px; min-width:80px;}
+  .field.narrow{flex:0 1 70px;}
+  .checkline{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink); margin-top:4px;}
+  .checkline input{width:auto;}
+
+  .btn{font-family:'Barlow Semi Condensed',sans-serif; font-weight:600; letter-spacing:.03em; text-transform:uppercase;
+    font-size:12.5px; padding:8px 13px; border-radius:4px; border:1px solid var(--line); background:var(--surface-2);
+    color:var(--ink); cursor:pointer;}
+  .btn:hover{filter:brightness(1.06);}
+  .btn:focus-visible{outline:2px solid var(--structure); outline-offset:1px;}
+  .btn.primary{background:var(--accent); color:var(--accent-ink); border-color:transparent;}
+  .btn.small{padding:4px 9px; font-size:11px;}
+  .btn.danger-outline{color:var(--danger); border-color:var(--danger);}
+
+  .row-item{border:1px solid var(--line); border-radius:4px; padding:10px 10px 12px; background:var(--surface-2); margin-bottom:10px; position:relative;}
+  .row-item .row-top{display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px;}
+  .row-item .row-top input{font-family:'Work Sans',sans-serif; font-weight:500;}
+  .empty-note{font-size:12.5px; color:var(--ink-soft); font-style:italic; padding:6px 2px;}
+
+  .banner{display:flex; gap:10px; align-items:flex-start; background:var(--surface-2); border:1px dashed var(--structure);
+    border-radius:4px; padding:10px 12px; font-size:12.5px; color:var(--ink-soft); margin-bottom:14px;}
+  .banner b{color:var(--ink);}
+
+  .issues{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px;}
+  .issues li{font-size:12.5px; padding:7px 10px; border-radius:4px; background:var(--surface-2); border-left:3px solid var(--line);}
+  .issues li.warn{border-left-color:var(--warn);}
+  .issues li.danger{border-left-color:var(--danger);}
+  .issues li.ok{border-left-color:var(--good); color:var(--ink-soft);}
+
+  .viewport-panel{position:static;}
+  @media (min-width:900px){ .viewport-panel{position:sticky; top:12px;} }
+  .canvas-wrap{position:relative; border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; background:var(--surface); box-shadow:var(--shadow);
+    height:340px;}
+  @media (min-width:900px){ .canvas-wrap{height:min(64vh,640px);} }
+  .canvas-wrap canvas{display:block; width:100%; height:100%;}
+  .hud{position:absolute; top:10px; left:10px; background:var(--hud-bg); backdrop-filter:blur(3px); border:1px solid var(--line);
+    border-radius:4px; padding:8px 10px; font-family:'IBM Plex Mono',monospace; font-size:11.5px; line-height:1.55; color:var(--ink); max-width:220px;}
+  .hud .k{color:var(--ink-soft);}
+  .legend{position:absolute; bottom:10px; left:10px; background:var(--hud-bg); backdrop-filter:blur(3px); border:1px solid var(--line);
+    border-radius:4px; padding:7px 10px; font-size:11px; color:var(--ink-soft); display:flex; gap:12px; flex-wrap:wrap;}
+  .legend span{display:inline-flex; align-items:center; gap:5px;}
+  .swatch{width:9px; height:9px; border-radius:2px; display:inline-block;}
+  .view-controls{display:flex; flex-wrap:wrap; gap:8px 16px; padding:10px 2px 0; font-size:12px; color:var(--ink-soft);}
+  .fallback{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:24px; font-size:13px; color:var(--ink-soft);}
+
+  .tabs{display:flex; gap:4px; margin-bottom:10px;}
+  .tabs button{flex:1;}
+  .tabs button[aria-selected="true"]{background:var(--structure); color:#fff; border-color:transparent;}
+  pre.code{background:var(--surface-2); border:1px solid var(--line); border-radius:4px; padding:12px; font-family:'IBM Plex Mono',monospace;
+    font-size:11.5px; line-height:1.55; overflow-x:auto; max-height:340px; white-space:pre; margin:0 0 10px;}
+  .copy-row{display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;}
+  .copy-status{font-size:11.5px; color:var(--good); opacity:0; transition:opacity .2s;}
+  .copy-status.show{opacity:1;}
+  footer.note{margin-top:26px; font-size:12px; color:var(--ink-soft); border-top:1px solid var(--line); padding-top:14px; line-height:1.6;}
+  footer.note code{font-family:'IBM Plex Mono',monospace; background:var(--surface-2); padding:1px 4px; border-radius:3px;}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div>
+        <div class="eyebrow">Pepper sim2real &middot; Task 2/3</div>
+        <h1>Room Plotter</h1>
+        <p>Enter the room shell, openings and furniture from your tape measurements, sanity-check the layout in 3D, then copy the generated <code style="font-family:'IBM Plex Mono',monospace">_spec.yaml</code> straight into the repo.</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button class="btn" id="btn-example">Load example</button>
+      <button class="btn danger-outline" id="btn-clear">Clear all</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="form-col">
+
+      <div class="banner" id="draft-banner" hidden>
+        <span>&#9679;</span>
+        <span><b>Showing example measurements.</b> Replace them with your own — everything below saves to this browser automatically as you type.</span>
+      </div>
+
+      <section class="card">
+        <h2><span class="step-no">1</span>Room shell</h2>
+        <p class="hint">Stand in one corner first — that's world (0,0), the x&#8209;axis runs along the long wall, y along the short wall. Every other measurement is taken from there.</p>
+        <div class="field-row">
+          <div class="field"><label for="f-length">Length, x (m)</label><input id="f-length" type="number" step="0.01" min="0"></div>
+          <div class="field"><label for="f-width">Width, y (m)</label><input id="f-width" type="number" step="0.01" min="0"></div>
+          <div class="field"><label for="f-height">Height (m)</label><input id="f-height" type="number" step="0.01" min="0"></div>
+        </div>
+        <div class="field-row" style="margin-top:8px">
+          <div class="field"><label for="f-wallt">Wall thickness (m)</label><input id="f-wallt" type="number" step="0.01" min="0.01"></div>
+          <div class="field"><label for="f-origin">Origin corner note</label><input id="f-origin" type="text" placeholder="e.g. door wall meets window wall" style="font-family:'Work Sans',sans-serif;"></div>
+        </div>
+        <label class="checkline"><input type="checkbox" id="f-ceiling" checked> Room has a ceiling to model</label>
+      </section>
+
+      <section class="card">
+        <h2><span class="step-no">2</span>Openings</h2>
+        <p class="hint">One row per door or low window. <b>start/end</b> are distances along that wall from your origin corner; <b>bottom/top</b> are heights off the floor (leave a door's top at the room height).</p>
+        <div id="openings-list"></div>
+        <button class="btn" id="btn-add-opening">+ Add opening</button>
+      </section>
+
+      <section class="card">
+        <h2><span class="step-no">3</span>Furniture</h2>
+        <p class="hint">Bounding box only — bring the exact shape in via the photogrammetry scan, not here. <b>Centre</b> is the box's middle, from the origin corner; <b>yaw</b> only matters if it sits at an angle.</p>
+        <div id="furniture-list"></div>
+        <button class="btn" id="btn-add-furniture">+ Add furniture</button>
+      </section>
+
+      <section class="card">
+        <h2>Checks</h2>
+        <p class="hint" style="margin-bottom:8px">Catches the kind of mistake that only shows up later — a door taller than the room, a desk that pokes through a wall.</p>
+        <ul class="issues" id="issues-list"></ul>
+      </section>
+
+      <section class="card">
+        <h2><span class="step-no">4</span>Export</h2>
+        <div class="tabs" role="tablist">
+          <button class="btn" id="tab-yaml" role="tab" aria-selected="true">_spec.yaml</button>
+          <button class="btn" id="tab-csv" role="tab" aria-selected="false">ground-truth.csv</button>
+        </div>
+        <div id="pane-yaml">
+          <p class="hint">Copy this into <code style="font-family:'IBM Plex Mono',monospace">simulation/photogrammetry/ground_truth/&lt;room&gt;_spec.yaml</code> — it's <code style="font-family:'IBM Plex Mono',monospace">tools/gen_world.py</code>'s input for the standard branch.</p>
+          <div class="copy-row"><span></span><span class="copy-status" id="copy-status-yaml">Copied</span></div>
+          <pre class="code" id="out-yaml"></pre>
+          <button class="btn primary" id="btn-copy-yaml">Copy spec.yaml</button>
+        </div>
+        <div id="pane-csv" hidden>
+          <p class="hint">A starting point for <code style="font-family:'IBM Plex Mono',monospace">&lt;room&gt;.csv</code> — the room-shell rows are ready; the <code style="font-family:'IBM Plex Mono',monospace">points</code> rows still need coordinates snapped to the mesh in Blender after <code style="font-family:'IBM Plex Mono',monospace">mesh_import.py</code> runs (see the runbook). Needs K&#8201;&#8805;&#8201;8 rows total, spread across x/y/z, before <code style="font-family:'IBM Plex Mono',monospace">mesh_validate.py</code> will pass.</p>
+          <div class="copy-row"><span></span><span class="copy-status" id="copy-status-csv">Copied</span></div>
+          <pre class="code" id="out-csv"></pre>
+          <button class="btn primary" id="btn-copy-csv">Copy CSV starter</button>
+        </div>
+      </section>
+
+    </aside>
+
+    <section class="viewport-panel">
+      <div class="canvas-wrap" id="canvas-wrap">
+        <div class="hud" id="hud"></div>
+        <div class="legend">
+          <span><i class="swatch" style="background:var(--structure)"></i>walls</span>
+          <span><i class="swatch" style="background:var(--furniture)"></i>furniture</span>
+          <span><i class="swatch" style="background:var(--accent)"></i>origin (0,0)</span>
+        </div>
+      </div>
+      <div class="view-controls">
+        <label class="checkline"><input type="checkbox" id="v-ceiling" checked> Show ceiling</label>
+        <label class="checkline"><input type="checkbox" id="v-grid" checked> Floor grid</label>
+        <label class="checkline"><input type="checkbox" id="v-wire"> Wireframe walls</label>
+        <button class="btn small" id="btn-reset-view">Reset view</button>
+      </div>
+      <footer class="note">
+        Drag to orbit, scroll to zoom. This view mirrors exactly how <code>tools/gen_world.py</code> will
+        build the standard branch — walls split around each opening, furniture as plain boxes — so if it
+        looks wrong here, the generated world will look wrong too.
+      </footer>
+    </section>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ---------- on-page error banner: never fail silently blank ----------
+  var errBox = null;
+  function showError(msg){
+    if(!errBox){
+      errBox = document.createElement("div");
+      errBox.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9999;background:#c1442e;color:#fff;"+
+        "font:12.5px 'IBM Plex Mono',monospace;padding:10px 14px;white-space:pre-wrap;max-height:40vh;overflow:auto;";
+      document.body.insertBefore(errBox, document.body.firstChild);
+    }
+    var line = document.createElement("div");
+    line.textContent = msg;
+    errBox.appendChild(line);
+  }
+  window.addEventListener("error", function(e){
+    showError("Script error: " + e.message + " (" + (e.filename||"") + ":" + (e.lineno||"?") + ")");
+  });
+  window.addEventListener("unhandledrejection", function(e){
+    showError("Unhandled promise rejection: " + (e.reason && e.reason.message ? e.reason.message : e.reason));
+  });
+
+  // ---------- state ----------
+  var STORAGE_KEY = "pepper-room-plotter-v1";
+  var uid = 1;
+  function nextId(){ return "r" + (uid++); }
+
+  var EXAMPLE = {
+    room: { length: 5.50, width: 4.20, height: 2.50, wall_thickness: 0.10, origin_note: "corner where the door wall meets the window wall" },
+    ceiling: true,
+    openings: [
+      { id: nextId(), name: "door", wall: "y_min", start: 1.20, end: 2.10, bottom: 0.0, top: 2.05 },
+      { id: nextId(), name: "window", wall: "x_max", start: 1.00, end: 2.60, bottom: 0.90, top: 2.10 }
+    ],
+    furniture: [
+      { id: nextId(), name: "desk", sx: 1.60, sy: 0.80, sz: 0.74, x: 1.20, y: 0.40, z: 0.37, yaw: 0 },
+      { id: nextId(), name: "cabinet", sx: 0.90, sy: 0.45, sz: 1.80, x: 4.80, y: 3.95, z: 0.90, yaw: 90 }
+    ]
+  };
+
+  var state = null;
+  var isExample = false;
+
+  function blankState(){
+    return { room:{length:0,width:0,height:0,wall_thickness:0.10,origin_note:""}, ceiling:true, openings:[], furniture:[] };
+  }
+
+  function loadState(){
+    try{
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if(raw){ isExample = false; return JSON.parse(raw); }
+    }catch(e){}
+    isExample = true;
+    return JSON.parse(JSON.stringify(EXAMPLE));
+  }
+  function saveState(){
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
+  }
+
+  // ---------- geometry: exact port of tools/gen_world.py: wall_segments() ----------
+  var WALLS = ["x_min","x_max","y_min","y_max"];
+
+  function wallSegments(wall, room, openings){
+    var L = room.length, W = room.width, H = room.height, t = room.wall_thickness;
+    var axisLo, axisHi, fixed, make;
+    if(wall === "x_min" || wall === "x_max"){
+      axisLo = -t; axisHi = W + t;
+      fixed = (wall === "x_min") ? -t/2 : L + t/2;
+      make = function(a0,a1,z0,z1,name){ return {name:name, centre:[fixed,(a0+a1)/2,(z0+z1)/2], size:[t,a1-a0,z1-z0]}; };
+    } else {
+      axisLo = 0; axisHi = L;
+      fixed = (wall === "y_min") ? -t/2 : W + t/2;
+      make = function(a0,a1,z0,z1,name){ return {name:name, centre:[(a0+a1)/2,fixed,(z0+z1)/2], size:[a1-a0,t,z1-z0]}; };
+    }
+    var mine = openings.filter(function(o){ return o.wall === wall; })
+                       .slice().sort(function(a,b){ return a.start - b.start; });
+    if(mine.length === 0) return [make(axisLo, axisHi, 0, H, wall)];
+    var out = [], cursor = axisLo;
+    mine.forEach(function(o, i){
+      var s = +o.start, e = +o.end;
+      var b = (o.bottom || 0), top = (o.top === undefined || o.top === null || o.top === "") ? H : +o.top;
+      if(!(axisLo - 1e-6 <= s && s < e && e <= axisHi + 1e-6)) return; // skip invalid; flagged in Checks panel
+      if(s > cursor) out.push(make(cursor, s, 0, H, wall+"_"+i+"_before"));
+      if(b > 0) out.push(make(s, e, 0, b, wall+"_"+(o.name||"opening"+i)+"_sill"));
+      if(top < H) out.push(make(s, e, top, H, wall+"_"+(o.name||"opening"+i)+"_lintel"));
+      cursor = e;
+    });
+    if(cursor < axisHi - 1e-6) out.push(make(cursor, axisHi, 0, H, wall+"_last"));
+    return out;
+  }
+
+  // ---------- validation ----------
+  function validate(){
+    var issues = [];
+    var room = state.room;
+    if(!(room.length > 0) || !(room.width > 0) || !(room.height > 0)){
+      issues.push({level:"danger", msg:"Room length, width and height must all be greater than zero."});
+    }
+    state.openings.forEach(function(o){
+      var name = o.name || "(unnamed opening)";
+      var axisMax = (o.wall === "x_min" || o.wall === "x_max") ? room.width : room.length;
+      if(!(o.start >= 0 && o.end > o.start)){
+        issues.push({level:"danger", msg:"Opening '"+name+"': start must be ≥ 0 and end must be greater than start."});
+      } else if(o.end > axisMax + 1e-6){
+        issues.push({level:"warn", msg:"Opening '"+name+"': end ("+o.end.toFixed(2)+"m) runs past the end of that wall ("+axisMax.toFixed(2)+"m)."});
+      }
+      var top = (o.top === undefined || o.top === null || o.top === "") ? room.height : +o.top;
+      if(top > room.height + 1e-6){
+        issues.push({level:"warn", msg:"Opening '"+name+"': top ("+top.toFixed(2)+"m) is taller than the room ("+room.height.toFixed(2)+"m)."});
+      }
+      if((o.bottom||0) >= top){
+        issues.push({level:"danger", msg:"Opening '"+name+"': bottom must be below top."});
+      }
+    });
+    ["x_min","x_max","y_min","y_max"].forEach(function(wall){
+      var onWall = state.openings.filter(function(o){ return o.wall === wall; }).slice().sort(function(a,b){return a.start-b.start;});
+      for(var i=1;i<onWall.length;i++){
+        if(onWall[i].start < onWall[i-1].end - 1e-6){
+          issues.push({level:"warn", msg:"Openings '"+(onWall[i-1].name||"?")+"' and '"+(onWall[i].name||"?")+"' overlap on wall "+wall+"."});
+        }
+      }
+    });
+    state.furniture.forEach(function(f){
+      var name = f.name || "(unnamed item)";
+      if(!(f.sx>0 && f.sy>0 && f.sz>0)){
+        issues.push({level:"danger", msg:"Furniture '"+name+"': size must be greater than zero on all three axes."});
+        return;
+      }
+      var yawRad = (f.yaw||0) * Math.PI/180;
+      var hx = Math.abs(Math.cos(yawRad))*f.sx/2 + Math.abs(Math.sin(yawRad))*f.sy/2;
+      var hy = Math.abs(Math.sin(yawRad))*f.sx/2 + Math.abs(Math.cos(yawRad))*f.sy/2;
+      var hz = f.sz/2;
+      var eps = 0.005;
+      if(f.x-hx < -eps || f.x+hx > room.length+eps || f.y-hy < -eps || f.y+hy > room.width+eps || f.z-hz < -eps || f.z+hz > room.height+eps){
+        issues.push({level:"warn", msg:"Furniture '"+name+"' extends outside the room shell — check its centre position and size."});
+      }
+    });
+    for(var i=0;i<state.furniture.length;i++){
+      for(var j=i+1;j<state.furniture.length;j++){
+        var a=state.furniture[i], b=state.furniture[j];
+        if(Math.abs(a.x-b.x) < (a.sx+b.sx)/2 - 0.01 && Math.abs(a.y-b.y) < (a.sy+b.sy)/2 - 0.01 && Math.abs(a.z-b.z) < (a.sz+b.sz)/2 - 0.01){
+          issues.push({level:"warn", msg:"Furniture '"+(a.name||"?")+"' and '"+(b.name||"?")+"' appear to overlap."});
+        }
+      }
+    }
+    if(issues.length === 0){
+      issues.push({level:"ok", msg:"No problems found — geometry is internally consistent."});
+    }
+    return issues;
+  }
+
+  // ---------- export ----------
+  function fmt(n){ return (Math.round(n*1000)/1000).toString(); }
+
+  function toSpecYAML(){
+    var r = state.room;
+    var lines = [];
+    lines.push("# Standard-branch room spec — generated with the Room Plotter tool.");
+    if(r.origin_note) lines.push("# Origin corner: " + r.origin_note);
+    lines.push("# FRAME: interior is x in [0, length], y in [0, width], floor at z = 0 —");
+    lines.push("# the same corner and axes tools/mesh_import.py uses with --origin-mode floor-min-corner.");
+    lines.push("");
+    lines.push("room:");
+    lines.push("  length: " + fmt(r.length));
+    lines.push("  width: " + fmt(r.width));
+    lines.push("  height: " + fmt(r.height));
+    lines.push("  wall_thickness: " + fmt(r.wall_thickness));
+    lines.push("  floor_thickness: 0.05");
+    lines.push("  include_ceiling: " + (state.ceiling ? "true" : "false"));
+    lines.push("  mu: 1.0");
+    lines.push("  mu2: 1.0");
+    lines.push("");
+    if(state.openings.length === 0){
+      lines.push("openings: []");
+    } else {
+      lines.push("openings:");
+      state.openings.forEach(function(o){
+        lines.push("  - name: " + (o.name || "opening"));
+        lines.push("    wall: " + o.wall);
+        lines.push("    start: " + fmt(o.start));
+        lines.push("    end: " + fmt(o.end));
+        lines.push("    bottom: " + fmt(o.bottom||0));
+        lines.push("    top: " + fmt((o.top===undefined||o.top===null||o.top==="") ? r.height : o.top));
+      });
+    }
+    lines.push("");
+    if(state.furniture.length === 0){
+      lines.push("furniture: []");
+    } else {
+      lines.push("furniture:");
+      state.furniture.forEach(function(f){
+        var yawRad = (f.yaw||0) * Math.PI/180;
+        lines.push("  - name: " + (f.name || "item"));
+        lines.push("    size: [" + fmt(f.sx) + ", " + fmt(f.sy) + ", " + fmt(f.sz) + "]");
+        if(Math.abs(yawRad) > 1e-6){
+          lines.push("    pose: [" + fmt(f.x) + ", " + fmt(f.y) + ", " + fmt(f.z) + ", " + fmt(yawRad) + "]");
+        } else {
+          lines.push("    pose: [" + fmt(f.x) + ", " + fmt(f.y) + ", " + fmt(f.z) + "]");
+        }
+      });
+    }
+    lines.push("");
+    lines.push("physics:");
+    lines.push("  max_step_size: 0.005");
+    lines.push("  real_time_factor: 1.0");
+    return lines.join("\n");
+  }
+
+  function toCsvStarter(){
+    var r = state.room;
+    var rows = [];
+    rows.push("# Tape-measured ground truth — starter generated by the Room Plotter tool.");
+    rows.push("# Room-shell 'extent' rows are filled from Section 1. Every 'points' row below still");
+    rows.push("# needs point_a/point_b picked off the mesh in Blender after tools/mesh_import.py runs —");
+    rows.push("# see docs/photogrammetry_runbook.md. Needs K >= 8 rows total, spread across x/y/z.");
+    rows.push("id,description,kind,axis,point_a,point_b,measured_m,notes");
+    rows.push("room_length,Long wall interior face to interior face at floor level,extent,x,,,"+fmt(r.length)+",");
+    rows.push("room_width,Short wall interior face to interior face at floor level,extent,y,,,"+fmt(r.width)+",");
+    rows.push("room_height,Floor to ceiling at the room centre,extent,z,,,"+fmt(r.height)+",");
+    state.openings.forEach(function(o){
+      var n = o.name || "opening";
+      rows.push(n+"_width,\""+n+" frame interior width\",points,,0 0 0,0 0 0,"+fmt(o.end-o.start)+",TODO: pick points in Blender");
+      rows.push(n+"_height,\""+n+" floor to top\",points,,0 0 0,0 0 0,"+fmt(((o.top===undefined||o.top===null||o.top==="")?r.height:o.top)-(o.bottom||0))+",TODO: pick points in Blender");
+    });
+    state.furniture.forEach(function(f){
+      var n = f.name || "item";
+      rows.push(n+"_length,\""+n+" long edge\",points,,0 0 0,0 0 0,"+fmt(Math.max(f.sx,f.sy))+",TODO: pick points in Blender");
+      rows.push(n+"_height,\"Floor to "+n+" top surface\",points,,0 0 0,0 0 0,"+fmt(f.sz)+",TODO: pick points in Blender");
+    });
+    return rows.join("\n");
+  }
+
+  // ---------- DOM: dynamic rows ----------
+  var openingsList = document.getElementById("openings-list");
+  var furnitureList = document.getElementById("furniture-list");
+
+  function openingRowHTML(o){
+    return '' +
+      '<div class="row-item" data-id="'+o.id+'">' +
+        '<div class="row-top">' +
+          '<input data-f="name" value="'+escapeAttr(o.name)+'" placeholder="name (e.g. door)" style="max-width:150px">' +
+          '<button class="btn small danger-outline" data-remove>Remove</button>' +
+        '</div>' +
+        '<div class="field-row">' +
+          '<div class="field"><label>Wall</label><select data-f="wall">' +
+            ["x_min","x_max","y_min","y_max"].map(function(w){return '<option value="'+w+'"'+(o.wall===w?' selected':'')+'>'+w+'</option>';}).join('') +
+          '</select></div>' +
+          '<div class="field narrow"><label>Start (m)</label><input data-f="start" type="number" step="0.01" value="'+o.start+'"></div>' +
+          '<div class="field narrow"><label>End (m)</label><input data-f="end" type="number" step="0.01" value="'+o.end+'"></div>' +
+        '</div>' +
+        '<div class="field-row" style="margin-top:6px">' +
+          '<div class="field narrow"><label>Bottom (m)</label><input data-f="bottom" type="number" step="0.01" value="'+(o.bottom||0)+'"></div>' +
+          '<div class="field narrow"><label>Top (m)</label><input data-f="top" type="number" step="0.01" value="'+(o.top===undefined||o.top===null?"":o.top)+'" placeholder="room height"></div>' +
+        '</div>' +
+      '</div>';
+  }
+
+  function furnitureRowHTML(f){
+    return '' +
+      '<div class="row-item" data-id="'+f.id+'">' +
+        '<div class="row-top">' +
+          '<input data-f="name" value="'+escapeAttr(f.name)+'" placeholder="name (e.g. desk)" style="max-width:150px">' +
+          '<button class="btn small danger-outline" data-remove>Remove</button>' +
+        '</div>' +
+        '<div class="field-row">' +
+          '<div class="field narrow"><label>Size x (m)</label><input data-f="sx" type="number" step="0.01" value="'+f.sx+'"></div>' +
+          '<div class="field narrow"><label>Size y (m)</label><input data-f="sy" type="number" step="0.01" value="'+f.sy+'"></div>' +
+          '<div class="field narrow"><label>Size z (m)</label><input data-f="sz" type="number" step="0.01" value="'+f.sz+'"></div>' +
+        '</div>' +
+        '<div class="field-row" style="margin-top:6px">' +
+          '<div class="field narrow"><label>Centre x (m)</label><input data-f="x" type="number" step="0.01" value="'+f.x+'"></div>' +
+          '<div class="field narrow"><label>Centre y (m)</label><input data-f="y" type="number" step="0.01" value="'+f.y+'"></div>' +
+          '<div class="field narrow"><label>Centre z (m)</label><input data-f="z" type="number" step="0.01" value="'+f.z+'"></div>' +
+          '<div class="field narrow"><label>Yaw (deg)</label><input data-f="yaw" type="number" step="1" value="'+(f.yaw||0)+'"></div>' +
+        '</div>' +
+      '</div>';
+  }
+
+  function escapeAttr(s){ return (s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
+
+  function renderLists(){
+    openingsList.innerHTML = state.openings.length
+      ? state.openings.map(openingRowHTML).join("")
+      : '<p class="empty-note">No doors or windows yet — add one below.</p>';
+    furnitureList.innerHTML = state.furniture.length
+      ? state.furniture.map(furnitureRowHTML).join("")
+      : '<p class="empty-note">No furniture yet — add each item Pepper must navigate around.</p>';
+  }
+
+  function bindListEvents(container, arr, numericFields){
+    container.addEventListener("input", function(e){
+      var row = e.target.closest(".row-item");
+      if(!row) return;
+      var item = arr.find(function(x){ return x.id === row.dataset.id; });
+      if(!item) return;
+      var f = e.target.dataset.f;
+      if(!f) return;
+      var v = e.target.value;
+      item[f] = numericFields.indexOf(f) >= 0 ? (v === "" ? "" : parseFloat(v)) : v;
+      onChange();
+    });
+    container.addEventListener("click", function(e){
+      if(e.target.matches("[data-remove]")){
+        var row = e.target.closest(".row-item");
+        var idx = arr.findIndex(function(x){ return x.id === row.dataset.id; });
+        if(idx >= 0){ arr.splice(idx,1); renderLists(); onChange(); }
+      }
+    });
+  }
+
+  // ---------- 3D viewport ----------
+  var three = null;
+  function showFallback(wrap, msg){
+    var fb = document.createElement("div");
+    fb.className = "fallback";
+    fb.textContent = msg;
+    wrap.appendChild(fb);
+  }
+  function initThree(){
+    var wrap = document.getElementById("canvas-wrap");
+    if(typeof THREE === "undefined"){
+      showFallback(wrap, "3D preview library didn't load (no internet on first open?) — the measurements and export below still work fine.");
+      return null;
+    }
+    try{
+      return initThreeUnsafe(wrap);
+    }catch(err){
+      showError("3D preview failed to start: " + err.message);
+      showFallback(wrap, "3D preview couldn't start in this browser (" + err.message + ") — the measurements and export below still work fine.");
+      return null;
+    }
+  }
+  function initThreeUnsafe(wrap){
+    var scene = new THREE.Scene();
+    var camera = new THREE.PerspectiveCamera(48, 1, 0.05, 500);
+    var renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+    wrap.insertBefore(renderer.domElement, wrap.firstChild);
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x445544, 1.0));
+    var dir = new THREE.DirectionalLight(0xffffff, 0.6);
+    dir.position.set(3,6,4);
+    scene.add(dir);
+
+    var group = new THREE.Group();
+    scene.add(group);
+
+    var orbit = { az: 0.7, el: 0.55, dist: 9, target: new THREE.Vector3(0,1,0) };
+    function applyCamera(){
+      var d = orbit.dist;
+      camera.position.set(
+        orbit.target.x + d*Math.cos(orbit.el)*Math.sin(orbit.az),
+        orbit.target.y + d*Math.sin(orbit.el),
+        orbit.target.z + d*Math.cos(orbit.el)*Math.cos(orbit.az)
+      );
+      camera.lookAt(orbit.target);
+    }
+    applyCamera();
+
+    var dragging = false, lastX=0, lastY=0;
+    renderer.domElement.style.touchAction = "none";
+    renderer.domElement.addEventListener("pointerdown", function(e){
+      dragging=true; lastX=e.clientX; lastY=e.clientY;
+      try{ renderer.domElement.setPointerCapture(e.pointerId); }catch(e2){}
+    });
+    renderer.domElement.addEventListener("pointerup", function(){ dragging=false; });
+    renderer.domElement.addEventListener("pointermove", function(e){
+      if(!dragging) return;
+      var dx = e.clientX-lastX, dy = e.clientY-lastY;
+      lastX=e.clientX; lastY=e.clientY;
+      orbit.az -= dx*0.006;
+      orbit.el = Math.max(0.08, Math.min(1.45, orbit.el + dy*0.006));
+      applyCamera();
+    });
+    renderer.domElement.addEventListener("wheel", function(e){
+      e.preventDefault();
+      orbit.dist = Math.max(1.5, Math.min(40, orbit.dist * (1 + e.deltaY*0.001)));
+      applyCamera();
+    }, {passive:false});
+
+    function resize(){
+      var w = wrap.clientWidth, h = wrap.clientHeight;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / Math.max(h,1);
+      camera.updateProjectionMatrix();
+    }
+    new ResizeObserver(resize).observe(wrap);
+    resize();
+
+    (function loop(){ requestAnimationFrame(loop); renderer.render(scene, camera); })();
+
+    return { scene:scene, camera:camera, renderer:renderer, group:group, orbit:orbit, applyCamera:applyCamera };
+  }
+
+  function toThree(p, room){
+    // room frame: x right, y depth(width), z up. three frame: X right, Y up, Z depth.
+    // recentred on the room's own centre so orbiting stays sane regardless of room size.
+    return new THREE.Vector3(p[0]-room.length/2, p[2], p[1]-room.width/2);
+  }
+
+  function makeBox(size, colour, opacity, wireframe){
+    var geo = new THREE.BoxGeometry(Math.max(size[0],0.001), Math.max(size[2],0.001), Math.max(size[1],0.001));
+    var mat = new THREE.MeshStandardMaterial({color:colour, transparent:opacity<1, opacity:opacity, wireframe:!!wireframe, roughness:0.85, metalness:0.02});
+    var mesh = new THREE.Mesh(geo, mat);
+    var edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({color:0x1e2b25, transparent:true, opacity:0.35}));
+    mesh.add(edges);
+    return mesh;
+  }
+
+  function readCSSColour(varName, fallback){
+    try{
+      var v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+      return v ? new THREE.Color(v).getHex() : fallback;
+    }catch(e){ return fallback; }
+  }
+
+  var viewOpts = { ceiling:true, grid:true, wire:false };
+
+  function rebuildScene(){
+    if(!three) return;
+    var room = state.room;
+    while(three.group.children.length) three.group.remove(three.group.children[0]);
+    if(!(room.length>0 && room.width>0 && room.height>0)) { updateHud([]); return; }
+
+    var structureColour = readCSSColour("--structure", 0x3a6ea5);
+    var furnitureColour = readCSSColour("--furniture", 0x8a6a4b);
+    var accentColour = readCSSColour("--accent", 0xe8622a);
+    var floorColour = readCSSColour("--surface-2", 0xdfe4da);
+
+    // floor
+    var floorSize = [room.length+2*room.wall_thickness, room.width+2*room.wall_thickness, 0.05];
+    var floor = makeBox(floorSize, floorColour, 1, false);
+    floor.position.copy(toThree([room.length/2, room.width/2, -0.025], room));
+    three.group.add(floor);
+
+    // ceiling
+    if(viewOpts.ceiling && state.ceiling){
+      var ceil = makeBox(floorSize, floorColour, 0.35, false);
+      ceil.position.copy(toThree([room.length/2, room.width/2, room.height+0.025], room));
+      three.group.add(ceil);
+    }
+
+    // walls
+    WALLS.forEach(function(wall){
+      wallSegments(wall, room, state.openings).forEach(function(seg){
+        var m = makeBox(seg.size, structureColour, viewOpts.wire?1:0.55, viewOpts.wire);
+        m.position.copy(toThree(seg.centre, room));
+        three.group.add(m);
+      });
+    });
+
+    // furniture
+    state.furniture.forEach(function(f){
+      if(!(f.sx>0 && f.sy>0 && f.sz>0)) return;
+      var m = makeBox([f.sx,f.sy,f.sz], furnitureColour, 1, false);
+      m.position.copy(toThree([f.x,f.y,f.z], room));
+      m.rotation.y = -(f.yaw||0) * Math.PI/180;
+      three.group.add(m);
+    });
+
+    // origin marker
+    var pin = new THREE.Mesh(new THREE.ConeGeometry(0.09,0.28,16), new THREE.MeshStandardMaterial({color:accentColour}));
+    var originPos = toThree([0,0,0], room);
+    pin.position.set(originPos.x, 0.14, originPos.z);
+    three.group.add(pin);
+
+    // floor grid
+    if(viewOpts.grid){
+      var span = Math.max(room.length, room.width) + 1.5;
+      var grid = new THREE.GridHelper(span, Math.round(span), 0x888888, 0xaaaaaa);
+      grid.material.opacity = 0.25; grid.material.transparent = true;
+      grid.position.y = 0.001;
+      three.group.add(grid);
+    }
+
+    updateHud(validateCache);
+  }
+
+  function resetView(){
+    if(!three) return;
+    var room = state.room;
+    var span = Math.max(room.length||4, room.width||4, room.height*1.4||3);
+    three.orbit.dist = span * 1.5;
+    three.orbit.target.set(0, (room.height||2.5)/2 - (room.height||2.5)/2 + 0.9, 0);
+    three.orbit.az = 0.7; three.orbit.el = 0.55;
+    three.applyCamera();
+  }
+
+  // ---------- HUD + issues ----------
+  var validateCache = [];
+  function updateHud(){
+    var room = state.room;
+    var hud = document.getElementById("hud");
+    var k = 3 + state.openings.length*2 + state.furniture.length*2;
+    hud.innerHTML =
+      '<div><span class="k">room</span> '+fmt2(room.length)+' &times; '+fmt2(room.width)+' &times; '+fmt2(room.height)+' m</div>' +
+      '<div><span class="k">openings</span> '+state.openings.length+' &nbsp; <span class="k">furniture</span> '+state.furniture.length+'</div>' +
+      '<div><span class="k">gate rows so far</span> '+k+' <span class="k">(need &ge;8)</span></div>';
+  }
+  function fmt2(n){ return (Math.round((n||0)*100)/100).toFixed(2); }
+
+  function renderIssues(){
+    var issues = validate();
+    validateCache = issues;
+    var ul = document.getElementById("issues-list");
+    ul.innerHTML = issues.map(function(i){
+      return '<li class="'+i.level+'">'+i.msg+'</li>';
+    }).join("");
+  }
+
+  // ---------- wiring ----------
+  var tYaml = document.getElementById("tab-yaml"), tCsv = document.getElementById("tab-csv");
+  var pYaml = document.getElementById("pane-yaml"), pCsv = document.getElementById("pane-csv");
+  tYaml.addEventListener("click", function(){ tYaml.setAttribute("aria-selected","true"); tCsv.setAttribute("aria-selected","false"); pYaml.hidden=false; pCsv.hidden=true; });
+  tCsv.addEventListener("click", function(){ tCsv.setAttribute("aria-selected","true"); tYaml.setAttribute("aria-selected","false"); pCsv.hidden=false; pYaml.hidden=true; });
+
+  function copyText(text, statusEl){
+    function flash(){ statusEl.classList.add("show"); setTimeout(function(){statusEl.classList.remove("show");}, 1400); }
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(flash).catch(function(){ fallbackCopy(text); flash(); });
+    } else { fallbackCopy(text); flash(); }
+  }
+  function fallbackCopy(text){
+    var ta = document.createElement("textarea");
+    ta.value = text; ta.style.position="fixed"; ta.style.opacity="0";
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand("copy"); }catch(e){}
+    document.body.removeChild(ta);
+  }
+
+  document.getElementById("btn-copy-yaml").addEventListener("click", function(){
+    copyText(document.getElementById("out-yaml").textContent, document.getElementById("copy-status-yaml"));
+  });
+  document.getElementById("btn-copy-csv").addEventListener("click", function(){
+    copyText(document.getElementById("out-csv").textContent, document.getElementById("copy-status-csv"));
+  });
+
+  document.getElementById("btn-add-opening").addEventListener("click", function(){
+    state.openings.push({id:nextId(), name:"", wall:"y_min", start:0, end:0.9, bottom:0, top:""});
+    renderLists(); onChange();
+  });
+  document.getElementById("btn-add-furniture").addEventListener("click", function(){
+    state.furniture.push({id:nextId(), name:"", sx:0.5, sy:0.5, sz:0.5, x:0.5, y:0.5, z:0.25, yaw:0});
+    renderLists(); onChange();
+  });
+
+  document.getElementById("btn-example").addEventListener("click", function(){
+    state = JSON.parse(JSON.stringify(EXAMPLE));
+    isExample = true;
+    syncFormFromState(); renderLists(); onChange(); resetView();
+  });
+  document.getElementById("btn-clear").addEventListener("click", function(){
+    state = blankState();
+    isExample = false;
+    syncFormFromState(); renderLists(); onChange(); resetView();
+  });
+
+  ["f-length","f-width","f-height","f-wallt","f-origin"].forEach(function(id){
+    document.getElementById(id).addEventListener("input", function(){
+      state.room.length = parseFloat(document.getElementById("f-length").value)||0;
+      state.room.width = parseFloat(document.getElementById("f-width").value)||0;
+      state.room.height = parseFloat(document.getElementById("f-height").value)||0;
+      state.room.wall_thickness = parseFloat(document.getElementById("f-wallt").value)||0.1;
+      state.room.origin_note = document.getElementById("f-origin").value;
+      onChange();
+    });
+  });
+  document.getElementById("f-ceiling").addEventListener("change", function(e){ state.ceiling = e.target.checked; onChange(); });
+
+  document.getElementById("v-ceiling").addEventListener("change", function(e){ viewOpts.ceiling = e.target.checked; rebuildScene(); });
+  document.getElementById("v-grid").addEventListener("change", function(e){ viewOpts.grid = e.target.checked; rebuildScene(); });
+  document.getElementById("v-wire").addEventListener("change", function(e){ viewOpts.wire = e.target.checked; rebuildScene(); });
+  document.getElementById("btn-reset-view").addEventListener("click", resetView);
+
+  function syncFormFromState(){
+    document.getElementById("f-length").value = state.room.length || "";
+    document.getElementById("f-width").value = state.room.width || "";
+    document.getElementById("f-height").value = state.room.height || "";
+    document.getElementById("f-wallt").value = state.room.wall_thickness || 0.1;
+    document.getElementById("f-origin").value = state.room.origin_note || "";
+    document.getElementById("f-ceiling").checked = !!state.ceiling;
+    document.getElementById("draft-banner").hidden = !isExample;
+  }
+
+  function onChange(){
+    saveState();
+    document.getElementById("draft-banner").hidden = !isExample;
+    renderIssues();
+    rebuildScene();
+    document.getElementById("out-yaml").textContent = toSpecYAML();
+    document.getElementById("out-csv").textContent = toCsvStarter();
+  }
+
+  // ---------- boot ----------
+  state = loadState();
+  // normalise ids for openings/furniture loaded from storage without ids (defensive)
+  state.openings.forEach(function(o){ if(!o.id) o.id = nextId(); });
+  state.furniture.forEach(function(f){ if(!f.id) f.id = nextId(); });
+
+  syncFormFromState();
+  renderLists();
+  bindListEvents(openingsList, state.openings, ["start","end","bottom","top"]);
+  bindListEvents(furnitureList, state.furniture, ["sx","sy","sz","x","y","z","yaw"]);
+
+  three = initThree();
+  onChange();
+  resetView();
+
+  window.addEventListener("resize", function(){});
+
+  // ---------- hot state for artifact republish ----------
+  try{
+    if(window.claude && window.claude.hot){
+      window.claude.hot.snapshot(function(){ return { state: state, isExample: isExample }; });
+      var boot = function(saved){
+        if(saved && saved.state){ state = saved.state; isExample = !!saved.isExample; syncFormFromState(); renderLists(); onChange(); resetView(); }
+      };
+      if(window.claude.hot.ready) window.claude.hot.ready(function(){ boot(window.claude.hot.data); });
+    }
+  }catch(e){}
+})();
+</script>

@@ -1,0 +1,275 @@
+{
+  "room": "room_photogrammetry",
+  "variant": null,
+  "source_path": "ros2_ws/src/pepper_room_description/models/room_photogrammetry/meshes/collision/room_collision.stl",
+  "fingerprint": "1c351fb952dc657a",
+  "params": {
+    "res": 0.05,
+    "radius": 0.28,
+    "clearance": 0.12,
+    "robot_height": 1.2
+  },
+  "n_routes": 20,
+  "routes": [
+    {
+      "route_id": "r000",
+      "start": [
+        1.9543,
+        4.705
+      ],
+      "start_yaw": 2.5934,
+      "goal": [
+        1.6916,
+        1.8437
+      ],
+      "optimal_length_m": 5.7391
+    },
+    {
+      "route_id": "r001",
+      "start": [
+        0.1837,
+        2.0547
+      ],
+      "start_yaw": 2.2819,
+      "goal": [
+        -0.3227,
+        -6.0382
+      ],
+      "optimal_length_m": 8.8042
+    },
+    {
+      "route_id": "r002",
+      "start": [
+        0.1558,
+        -5.1759
+      ],
+      "start_yaw": 1.0721,
+      "goal": [
+        -0.1078,
+        1.1092
+      ],
+      "optimal_length_m": 6.7349
+    },
+    {
+      "route_id": "r003",
+      "start": [
+        0.1716,
+        1.0222
+      ],
+      "start_yaw": 1.1658,
+      "goal": [
+        3.5907,
+        1.902
+      ],
+      "optimal_length_m": 3.7935
+    },
+    {
+      "route_id": "r004",
+      "start": [
+        1.4752,
+        5.6724
+      ],
+      "start_yaw": 0.1593,
+      "goal": [
+        1.8976,
+        1.9391
+      ],
+      "optimal_length_m": 6.7234
+    },
+    {
+      "route_id": "r005",
+      "start": [
+        0.3522,
+        -1.0658
+      ],
+      "start_yaw": 1.8039,
+      "goal": [
+        0.795,
+        5.0946
+      ],
+      "optimal_length_m": 7.1335
+    },
+    {
+      "route_id": "r006",
+      "start": [
+        1.2806,
+        4.8145
+      ],
+      "start_yaw": -1.8943,
+      "goal": [
+        2.1434,
+        0.3732
+      ],
+      "optimal_length_m": 6.5169
+    },
+    {
+      "route_id": "r007",
+      "start": [
+        1.0198,
+        5.6179
+      ],
+      "start_yaw": 2.7779,
+      "goal": [
+        0.4744,
+        -3.987
+      ],
+      "optimal_length_m": 10.7613
+    },
+    {
+      "route_id": "r008",
+      "start": [
+        0.8961,
+        -4.8155
+      ],
+      "start_yaw": 2.8563,
+      "goal": [
+        0.2872,
+        -0.725
+      ],
+      "optimal_length_m": 4.9349
+    },
+    {
+      "route_id": "r009",
+      "start": [
+        -1.2879,
+        -2.116
+      ],
+      "start_yaw": -0.251,
+      "goal": [
+        -0.6594,
+        0.9004
+      ],
+      "optimal_length_m": 3.4142
+    },
+    {
+      "route_id": "r010",
+      "start": [
+        -0.1236,
+        -1.4504
+      ],
+      "start_yaw": 2.6856,
+      "goal": [
+        -0.2035,
+        3.5394
+      ],
+      "optimal_length_m": 5.2278
+    },
+    {
+      "route_id": "r011",
+      "start": [
+        3.1915,
+        2.0462
+      ],
+      "start_yaw": -2.2069,
+      "goal": [
+        1.5899,
+        6.0009
+      ],
+      "optimal_length_m": 8.4062
+    },
+    {
+      "route_id": "r012",
+      "start": [
+        -0.0147,
+        0.9941
+      ],
+      "start_yaw": 1.8968,
+      "goal": [
+        0.7148,
+        6.0646
+      ],
+      "optimal_length_m": 6.0956
+    },
+    {
+      "route_id": "r013",
+      "start": [
+        -0.0959,
+        -2.9201
+      ],
+      "start_yaw": -2.8871,
+      "goal": [
+        -0.1371,
+        5.3495
+      ],
+      "optimal_length_m": 8.5607
+    },
+    {
+      "route_id": "r014",
+      "start": [
+        -0.3785,
+        4.4044
+      ],
+      "start_yaw": 1.6208,
+      "goal": [
+        0.6768,
+        3.4538
+      ],
+      "optimal_length_m": 1.5899
+    },
+    {
+      "route_id": "r015",
+      "start": [
+        -0.2127,
+        -2.7937
+      ],
+      "start_yaw": -0.9782,
+      "goal": [
+        1.6829,
+        0.9063
+      ],
+      "optimal_length_m": 4.5749
+    },
+    {
+      "route_id": "r016",
+      "start": [
+        0.6391,
+        -1.8689
+      ],
+      "start_yaw": 2.4386,
+      "goal": [
+        0.0537,
+        0.1151
+      ],
+      "optimal_length_m": 2.2278
+    },
+    {
+      "route_id": "r017",
+      "start": [
+        -0.0612,
+        4.5215
+      ],
+      "start_yaw": 2.1884,
+      "goal": [
+        2.7184,
+        1.7327
+      ],
+      "optimal_length_m": 5.5021
+    },
+    {
+      "route_id": "r018",
+      "start": [
+        1.2111,
+        5.5985
+      ],
+      "start_yaw": -0.5317,
+      "goal": [
+        -0.7071,
+        -2.8059
+      ],
+      "optimal_length_m": 9.8234
+    },
+    {
+      "route_id": "r019",
+      "start": [
+        -0.4241,
+        1.0502
+      ],
+      "start_yaw": -2.768,
+      "goal": [
+        -1.2029,
+        -1.5038
+      ],
+      "optimal_length_m": 2.8607
+    }
+  ]
+}
